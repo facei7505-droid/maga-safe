@@ -1,0 +1,16 @@
+body.report { background: var(--panel); }
+.report main { max-width: 980px; margin: 0 auto; padding: 16px 24px 40px; }
+.report-bar { padding: 10px 24px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; }
+.r-head { display: flex; gap: 24px; align-items: center; border-bottom: 3px solid var(--high); padding-bottom: 12px; }
+.r-head h1 { margin: 0; font-size: 24px; }
+.report h2 { font-size: 16px; margin: 22px 0 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.kv-table th { width: 200px; color: var(--muted); font-weight: 500; }
+.r-proof { display: grid; grid-template-columns: 220px 1fr; gap: 16px; align-items: start; }
+.r-posts q { display: block; color: var(--muted); font-style: italic; font-size: 12px; }
+.r-posts td { vertical-align: top; }
+@media print {
+  .no-print { display: none !important; }
+  body.report { background: #fff; color: #000; }
+  .report main { padding: 0; }
+  .r-posts tr, .r-proof { break-inside: avoid; }
+}
