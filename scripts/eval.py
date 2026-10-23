@@ -147,6 +147,11 @@ def to_markdown(report: dict) -> str:
                     lines.append(f"| ≥{lvl} | {t} | {m['precision']} | {m['recall']} | {m['f1']} | |")
                 for lang, m in r["by_lang"].items():
                     lines.append(f"| ≥{lvl} | язык {lang} | {m['precision']} | {m['recall']} | {m['f1']} | {m.get('fpr', '')} |")
+            if mode == "handwritten_blind":
+                med = res["medium"]
+                lines += ["", "Ошибки на слепом наборе (≥medium), показаны как есть:"]
+                lines += [f"- ложное срабатывание: {t}" for t in med["false_positives"]]
+                lines += [f"- пропуск: {t}" for t in med["missed"]]
             if "image_posts" in res:
                 ip = res["image_posts"]["medium"]
                 lines.append(f"\nПосты с изображениями (≥medium): precision {ip['precision']}, recall {ip['recall']}, FPR {ip.get('fpr')}.")
@@ -164,6 +169,8 @@ def main() -> None:
     ap.add_argument("--mode", choices=["text", "full", "both"], default="both")
     ap.add_argument("--handwritten", type=Path, default=Path("eval/handwritten.jsonl"),
                     help="независимый ручной набор, не из генератора")
+    ap.add_argument("--blind", type=Path, default=Path("eval/handwritten_blind.jsonl"),
+                    help="слепой ручной набор: зафиксирован до настройки правил, на нём не настраиваемся")
     ap.add_argument("--report", type=Path, default=Path("reports/eval.json"))
     ap.add_argument("--markdown", type=Path, default=Path("docs/metrics.md"))
     args = ap.parse_args()
@@ -176,6 +183,8 @@ def main() -> None:
         report["results"]["text"] = eval_text(posts, settings, args.model)
     if args.handwritten.exists():
         report["results"]["handwritten"] = eval_text(load_handwritten(args.handwritten), settings, args.model)
+    if args.blind.exists():
+        report["results"]["handwritten_blind"] = eval_text(load_handwritten(args.blind), settings, args.model)
     if args.mode in ("full", "both"):
         report["results"]["full"] = eval_full(posts, args.data.parent, args.model)
     args.report.parent.mkdir(parents=True, exist_ok=True)
