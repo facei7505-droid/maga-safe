@@ -9,7 +9,6 @@ filterwarnings = [
 [tool.coverage.run]
 source = ["pruf"]
 omit = [
-    "pruf/bot/*",
     "pruf/synth/generator.py",
 ]
 

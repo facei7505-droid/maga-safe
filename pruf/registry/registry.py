@@ -144,12 +144,7 @@ class ProofRegistry:
                 accepted.append((aid, dist))
         return sorted(accepted, key=lambda x: x[1])
 
-    def register_image(self, post_id: int, data: bytes, ocr_tokens: list[OcrToken] | None = None,
-                       img: Image.Image | None = None) -> ImageResult:
-        img = img if img is not None else open_image(data)
-        sha = sha256_bytes(data)
-        fmt = _FORMAT_EXT.get((_peek_format(data) or "").upper(), "png")
-        self._blobs.put(sha, fmt, data)
+    def _read_image(self, img: Image.Image, ocr_tokens: list[OcrToken] | None) -> tuple[np.ndarray, int, list[OcrToken], bool]:
         words, quality = pdq_hash(img)
         ocr_ok = True
         tokens = ocr_tokens or []
@@ -158,6 +153,32 @@ class ProofRegistry:
                 tokens = run_ocr(img)
             except OcrUnavailable:
                 ocr_ok = False
+        return words, quality, tokens, ocr_ok
+
+    def _diff_with(self, other_id: int, tokens: list[OcrToken]) -> list[TokenChange]:
+        other = self._db.get_artifact(other_id)
+        if not (tokens and other and other["ocr"]):
+            return []
+        return diff_tokens(tokens_from_json(other["ocr"]), tokens)
+
+    def lookup_image(self, data: bytes, img: Image.Image | None = None) -> ImageResult:
+        """Поиск без записи: для бота и быстрой проверки. Ничего не сохраняет в реестр."""
+        img = img if img is not None else open_image(data)
+        words, _quality, tokens, ocr_ok = self._read_image(img, None)
+        found = self._image_candidates(words, strong_tokens(tokens))
+        post_of = self._db.artifact_post_ids(a for a, _ in found)
+        matches = [ImageMatch(aid, post_of.get(aid, -1), dist, self._diff_with(aid, tokens) if rank < MAX_DIFFS_PER_IMAGE else [])
+                   for rank, (aid, dist) in enumerate(found)]
+        anomalies = token_anomalies(img, tokens) if tokens else []
+        return ImageResult(-1, sha256_bytes(data), tokens_to_text(tokens), tokens, matches, anomalies, ocr_ok)
+
+    def register_image(self, post_id: int, data: bytes, ocr_tokens: list[OcrToken] | None = None,
+                       img: Image.Image | None = None) -> ImageResult:
+        img = img if img is not None else open_image(data)
+        sha = sha256_bytes(data)
+        fmt = _FORMAT_EXT.get((_peek_format(data) or "").upper(), "png")
+        self._blobs.put(sha, fmt, data)
+        words, quality, tokens, ocr_ok = self._read_image(img, ocr_tokens)
         anomalies = token_anomalies(img, tokens) if tokens else []
         strong = strong_tokens(tokens)
         found = self._image_candidates(words, strong)
@@ -170,11 +191,7 @@ class ProofRegistry:
         for rank, (other_id, dist) in enumerate(found):
             if post_of.get(other_id) == post_id:
                 continue
-            changes: list[TokenChange] = []
-            if rank < MAX_DIFFS_PER_IMAGE and tokens:
-                other = self._db.get_artifact(other_id)
-                if other and other["ocr"]:
-                    changes = diff_tokens(tokens_from_json(other["ocr"]), tokens)
+            changes = self._diff_with(other_id, tokens) if rank < MAX_DIFFS_PER_IMAGE else []
             self._db.add_match(artifact_id, other_id, "image", dist, {"changes": changes_to_json(changes)} if changes else None)
             matches.append(ImageMatch(other_id, post_of.get(other_id, -1), dist, changes))
         self.images.add(artifact_id, words)

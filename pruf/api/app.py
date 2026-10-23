@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -28,6 +29,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
 from pruf.api.security import RateLimiter, require_analyst, require_bank, sniff_upload
+from pruf.bot.telegram import BotLogic, HttpTelegramApi
 from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
 from pruf.graph.builder import CaseGraph, artifact_timeline
@@ -83,6 +85,9 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             raise RuntimeError("ПРУФ MVP работает в одном процессе: уберите --workers / WEB_CONCURRENCY")
         state["pruf"] = pruf or Pruf(settings)
         state["graph"] = CaseGraph(state["pruf"].db)
+        if settings.telegram_token and settings.telegram_secret:
+            logging.getLogger("httpx").setLevel(logging.WARNING)  # httpx пишет URL с токеном бота на INFO
+            state["bot"] = BotLogic(state["pruf"], HttpTelegramApi(settings.telegram_token), settings.max_upload_bytes)
         if settings.dev_mode:
             log.warning("PRUF_DEV_MODE=1: токены не обязательны, не используйте в проде")
         yield
@@ -334,6 +339,22 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
                    "max_score": found["max_score"], "tracks": sorted(set((found["tracks"] or "").split(",")) - {""}),
                    "first_seen": found["first_seen"],
                    "note": "Найдены признаки использования реквизита в схемах; требуется проверка банком"})
+
+    # ---------- Telegram webhook ----------
+    @app.post("/api/v1/telegram/webhook")
+    def telegram_webhook(update: dict[str, Any], request: Request):
+        bot = state.get("bot")
+        if bot is None:
+            raise HTTPException(status_code=404, detail="Бот не настроен")
+        got = request.headers.get("x-telegram-bot-api-secret-token", "")
+        if not hmac.compare_digest(got.encode(), settings.telegram_secret.encode()):
+            limiter.check(f"tgfail:{request.client.host if request.client else 'unknown'}")
+            raise HTTPException(status_code=401, detail="Неверный секрет")
+        try:
+            bot.handle(update)
+        except Exception:
+            log.exception("ошибка обработки update")
+        return ok({"handled": True})
 
     @app.get("/api/v1/health")
     def health():

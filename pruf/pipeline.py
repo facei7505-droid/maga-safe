@@ -212,9 +212,29 @@ class Pruf:
         }
 
     def analyze_only(self, text: str) -> dict[str, Any]:
-        """Быстрая проверка без сохранения (бот, проверка из дашборда): реестр только читается,
-        поэтому номер, уже засвеченный в рискованных постах, виден и здесь."""
-        sources = [SourceText("text", text)]
+        """Быстрая проверка текста без сохранения."""
+        return self.check(text)["analysis"]
+
+    def check(self, text: str | None, images: tuple[bytes, ...] = (), transcript: str | None = None) -> dict[str, Any]:
+        """Проверка без сохранения (бот, дашборд): реестр и граф только читаются, поэтому
+        уже засвеченный номер или скрин, встречавшийся в рискованных постах, виден и здесь."""
+        decoded = [(data, open_image(data)) for data in images]
+        got = _Collected(images=[self.registry.lookup_image(data, img) for data, img in decoded])
+        degraded = []
+        if any(not r.ocr_ok for r in got.images):
+            degraded.append({"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"})
+        ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or ""
+        sources = [SourceText("text", text or ""), SourceText("ocr", ocr_text), SourceText("voice", transcript or "")]
         first = self.detector.detect(sources, allow_llm=False)
-        context = self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
-        return self.detector.detect(sources, context).analysis.to_dict()
+        context = self._proof_context(got) + self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
+        analysis = self.detector.detect(sources, context).analysis
+        if analysis.llm_status == "failed":
+            degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
+        analysis = replace(analysis, degraded=tuple(degraded))
+        return {
+            "analysis": analysis.to_dict(),
+            "proofs": [{"sha256": r.sha256, "match_count": len(r.matches),
+                        "matches": [{"artifact_id": m.artifact_id, "post_id": m.post_id, "distance": m.distance,
+                                     "changes": changes_to_json(m.changes)} for m in r.matches[:50]]}
+                       for r in got.images],
+        }
