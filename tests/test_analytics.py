@@ -106,3 +106,48 @@ def test_overview_endpoint_reports_surge_and_case_statuses(client: TestClient) -
     assert len(data["daily"]) == 3
     assert data["surges"][0]["requisite"] == "+77019998877"
     assert len(data["surges"][0]["channels"]) == 3 and data["surges"][0]["cases"]
+
+
+# ---------- приоритет кейса ----------
+from pruf.graph.builder import case_priority, plural  # noqa: E402
+
+
+def test_plural_russian_forms() -> None:
+    assert [plural(n, "канал", "канала", "каналов") for n in (1, 3, 5, 11, 21, 112)] == [
+        "1 канал", "3 канала", "5 каналов", "11 каналов", "21 канал", "112 каналов"]
+
+
+def test_wide_cross_track_campaign_outranks_single_post_with_same_risk_score() -> None:
+    # Arrange: оба кейса «высокий · 100», но масштаб разный
+    big = case_priority(100, 37, tuple(f"@c{i}" for i in range(12)), ("lottery", "casino", "pyramid"),
+                        [set(range(37))], ("+77011112233",), ["2026-09-20T00:00:00", "2026-10-19T00:00:00"])
+    small = case_priority(100, 1, ("@c0",), ("casino",), [], (), ["2026-10-01T00:00:00"])
+
+    # Assert
+    assert big[0] > small[0] + 40
+    assert "12 каналов" in big[1] and "3 трека одной сети" in big[1] and "пруф ×37" in big[1]
+    assert small[1] == ()
+    assert 0 <= small[0] <= big[0] <= 100
+
+
+# ---------- даты демо ----------
+def _seed_demo_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("seed_demo", Path(__file__).resolve().parent.parent / "scripts" / "seed_demo.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_demo_shift_moves_synthetic_background_to_end_today() -> None:
+    # Arrange
+    from datetime import datetime, timezone
+    seed = _seed_demo_module()
+    now = datetime(2026, 10, 23, 15, 30, tzinfo=timezone.utc)
+
+    # Act
+    shift = seed.demo_shift(now)
+
+    # Assert: последний день синтетики становится сегодняшним, время суток сохраняется
+    assert seed._shifted("2026-10-31T09:00:00+00:00", shift) == "2026-10-23T09:00:00+00:00"
+    assert seed.demo_shift(seed.SYNTH_END).days == 0

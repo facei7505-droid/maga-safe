@@ -73,8 +73,10 @@ function renderQueue() {
 
 function caseItem(c) {
   const li = el("li", { "data-key": c.key, tabindex: 0, onclick: () => openCase(c.key), onkeydown: (e) => { if (e.key === "Enter") openCase(c.key); } },
-    el("div", {}, badge(c.level, c.score), " ", el("b", {}, c.key), " ", el("span", { class: "status-pill " + c.status }, STATUS[c.status] || c.status)),
+    el("div", { class: "case-top" }, el("span", {}, badge(c.level, c.score), " ", el("b", {}, c.key), " ", el("span", { class: "status-pill " + c.status }, STATUS[c.status] || c.status)),
+      el("span", { class: "prio", title: "Приоритет: риск, охват каналов, связь треков, повтор пруфа, скорость, реквизиты" }, `приоритет ${Math.round(c.priority)}`)),
     el("div", {}, chips(c.tracks)),
+    c.priority_reasons && c.priority_reasons.length ? el("div", { class: "reasons" }, c.priority_reasons.map((r) => el("span", {}, r))) : null,
     el("div", { class: "meta" }, `${c.size} постов · ${c.channels.length} каналов · семейств пруфов: ${c.families}`),
     c.requisites.length ? el("div", { class: "meta" }, "Реквизиты: " + c.requisites.slice(0, 3).join(", ")) : null,
   );
@@ -239,17 +241,29 @@ function highlighted(text, evidence, source) {
   return el("div", { class: "text" }, out);
 }
 
+// Один признак может сработать в нескольких местах: показываем строку один раз со всеми цитатами
+function groupEvidence(evidence) {
+  const groups = new Map();
+  for (const e of evidence || []) {
+    const key = `${e.feature_id}|${e.source}`;
+    if (!groups.has(key)) groups.set(key, { ...e, quotes: [] });
+    if (e.quote && !groups.get(key).quotes.includes(e.quote)) groups.get(key).quotes.push(e.quote);
+  }
+  return [...groups.values()];
+}
+
 function evidenceLine(e) {
   const cls = e.stop ? "stop" : e.source === "registry" || e.source === "graph" ? "ctx" : e.weight > 0 ? "pos" : "";
   const w = e.weight ? ` (${e.weight > 0 ? "+" : ""}${e.weight})` : "";
   return el("div", { class: "ev " + cls },
     el("span", {}, e.label + w), el("span", { class: "src" }, SOURCE[e.source] || e.source),
-    e.quote ? el("q", {}, e.quote) : null);
+    (e.quotes || (e.quote ? [e.quote] : [])).map((q) => el("q", {}, q)));
 }
 
 function renderPost(p) {
   const a = p.analysis || {};
-  const ev = (a.evidence || []).slice(0, 12).map(evidenceLine);
+  const grouped = groupEvidence(a.evidence);
+  const ev = grouped.slice(0, 12).map(evidenceLine);
   const related = el("button", { class: "link", onclick: async () => {
     try {
       const { data, meta } = await api(`/api/v1/posts/${p.id}/related`);
@@ -264,7 +278,7 @@ function renderPost(p) {
     p.text ? highlighted(p.text, a.evidence, "text") : null,
     thumbs.length ? el("div", { class: "mini-thumbs" }, thumbs) : null,
     p.ocr_text ? el("details", {}, el("summary", {}, "Текст со скриншота (OCR)"), highlighted(p.ocr_text, a.evidence, "ocr")) : null,
-    el("details", { class: "evidence" }, el("summary", {}, `Признаки (${(a.evidence || []).length})`), ev),
+    el("details", { class: "evidence" }, el("summary", {}, `Признаки (${grouped.length})`), ev),
     (a.degraded || []).map((x) => el("div", { class: "banner" }, x.reason)), related);
 }
 
@@ -379,7 +393,7 @@ function renderCheck(data, text) {
       el("div", {}, el("h2", {}, "Риск ", badge(a.level, a.score), a.track ? el("span", {}, " ", chips([a.track])) : null), el("p", {}, a.summary))),
     (a.degraded || []).map((d) => el("div", { class: "banner" }, d.reason)),
     text ? el("div", {}, el("h3", {}, "Где найдены признаки"), highlighted(text, a.evidence, "text")) : null,
-    el("div", { class: "grid2" }, el("div", {}, el("h3", {}, "Признаки"), a.evidence.map(evidenceLine)),
+    el("div", { class: "grid2" }, el("div", {}, el("h3", {}, "Признаки"), groupEvidence(a.evidence).map(evidenceLine)),
       el("div", {}, el("h3", {}, "Баллы по трекам"), tracks, proofs,
         a.requisites.length ? el("p", {}, "Реквизиты: " + a.requisites.map((r) => r.display).join(", ")) : null,
         data.post_id ? el("p", { class: "muted" }, `Сохранено как пост #${data.post_id}`) : null)),

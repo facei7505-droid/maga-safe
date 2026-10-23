@@ -41,6 +41,19 @@ HERO_EDITED = 5
 HERO_DAYS = 30
 OPERATOR_PHONE = "+7 747 318 52 64"
 HERO_START = datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc)
+SYNTH_END = datetime(2026, 10, 31, tzinfo=timezone.utc)  # последний день фоновой синтетики
+
+
+def demo_shift(now: datetime | None = None) -> timedelta:
+    """Сдвиг дат демо так, чтобы фон заканчивался сегодня: на показе нет постов «из будущего»."""
+    today = (now or datetime.now(timezone.utc)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return timedelta(days=(today - SYNTH_END).days)
+
+
+def _shifted(iso: str, shift: timedelta) -> str:
+    return (datetime.fromisoformat(iso) + shift).isoformat(timespec="seconds")
+
+
 HERO_CHANNELS = ["@aktobe_konkurs", "@almaty_priz", "@kz_lucky_drop", "@shymkent_giveaway", "@astana_bonus",
                  "@vyplaty_kz", "@karaganda_razdacha", "@taraz_kz_win", "@atyrau_priz", "@pavlodar_bonus",
                  "@semey_lucky", "@kostanay_drop"]
@@ -77,7 +90,7 @@ def ensure_model(settings: Settings, gen_seed: int = 42) -> TrackClassifier:
     return clf
 
 
-def seed_background(pruf: Pruf, tmp: Path, campaigns_per_track: int, legit: int) -> int:
+def seed_background(pruf: Pruf, tmp: Path, campaigns_per_track: int, legit: int, shift: timedelta = timedelta()) -> int:
     gen = Generator(seed=7, out_dir=tmp)
     posts = gen.dataset(campaigns_per_track=campaigns_per_track, posts_per_campaign=10, legit=legit, image_rate=0.3)
     posts.sort(key=lambda p: p.posted_at)
@@ -85,14 +98,16 @@ def seed_background(pruf: Pruf, tmp: Path, campaigns_per_track: int, legit: int)
         uploads = ()
         if p.image:
             uploads = (Upload((tmp / p.image).read_bytes(), "image", "jpg"),)
-        pruf.ingest(Submission(text=p.text, uploads=uploads, source="seed", channel=p.channel, posted_at=p.posted_at,
+        pruf.ingest(Submission(text=p.text, uploads=uploads, source="seed", channel=p.channel, posted_at=_shifted(p.posted_at, shift),
                                external_id=p.id, label=p.label))
     return len(posts)
 
 
-def seed_hero(pruf: Pruf, rng: random.Random) -> dict[str, int]:
+def seed_hero(pruf: Pruf, rng: random.Random, shift: timedelta = timedelta()) -> dict[str, int]:
     """37 появлений одного скрина выплаты, 5 из них с перерисованной суммой, один номер на три трека."""
-    base_img = render_receipt(Receipt("150 000", "Айгерим С.", "19.09.2026", "14:35", "7740213"))
+    start = HERO_START + shift
+    receipt_day = (start - timedelta(days=1)).strftime("%d.%m.%Y")  # чек «выплаты» за день до первого поста
+    base_img = render_receipt(Receipt("150 000", "Айгерим С.", receipt_day, "14:35", "7740213"))
     base = to_jpeg(base_img, 90)
     edited_at = set(rng.sample(range(4, HERO_APPEARANCES), HERO_EDITED))
     fake_amounts = iter(["450 000", "1 150 000", "750 000", "350 000", "950 000"])
@@ -100,7 +115,7 @@ def seed_hero(pruf: Pruf, rng: random.Random) -> dict[str, int]:
     counts = {t: 0 for t in tracks}
     for i in range(HERO_APPEARANCES):
         track = tracks[i % 3]
-        when = HERO_START + timedelta(minutes=int(i * HERO_DAYS * 24 * 60 / HERO_APPEARANCES) + rng.randint(0, 600))
+        when = start + timedelta(minutes=int(i * HERO_DAYS * 24 * 60 / HERO_APPEARANCES) + rng.randint(0, 600))
         channel = HERO_CHANNELS[i % len(HERO_CHANNELS)]
         img = edit_amount(base, next(fake_amounts)) if i in edited_at else base_img
         data = to_jpeg(img, 90) if i == 0 else repost_variant(img, rng, channel)
@@ -133,9 +148,10 @@ def main() -> None:
     t0 = time.perf_counter()
     tmp = settings.data_dir / "_seed_tmp"
     try:
-        n = seed_background(pruf, tmp, args.campaigns, args.legit)
+        shift = demo_shift()
+        n = seed_background(pruf, tmp, args.campaigns, args.legit, shift)
         _log(f"фон: {n} постов за {time.perf_counter() - t0:.1f} с")
-        counts = seed_hero(pruf, random.Random(2026))
+        counts = seed_hero(pruf, random.Random(2026), shift)
         _log(f"вау-сценарий: {HERO_APPEARANCES} появлений пруфа, {HERO_EDITED} с правкой суммы, треки {counts}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

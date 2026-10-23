@@ -35,6 +35,10 @@ function render(root, d, tl) {
       el("div", { class: "brand" }, el("span", { class: "logo" }, "П"), "ПРУФ"),
       el("div", {}, el("h1", {}, `Кейс ${c.key} `, badge(c.level, c.score)),
         el("div", { class: "muted" }, `Сформирован ${when(new Date().toISOString())} UTC · статус: ${STATUS[d.status.status] || d.status.status}`))),
+    el("section", { class: "r-lead" },
+      el("div", { class: "r-prio" }, el("b", {}, Math.round(c.priority || 0)), el("span", {}, "приоритет из 100")),
+      el("div", {}, el("p", {}, lead(c, d.posts, tl, edits)),
+        (c.priority_reasons || []).length ? el("p", { class: "muted small" }, "Почему в начале очереди: " + c.priority_reasons.join(", ") + ".") : null)),
     el("p", { class: "note" }, "Документ перечисляет признаки схем, найденные автоматически. Это не вердикт и не доказательство вины: решение принимает уполномоченный специалист после проверки."),
     el("h2", {}, "Сводка"),
     el("table", { class: "table kv-table" }, el("tbody", {},
@@ -64,6 +68,23 @@ function render(root, d, tl) {
     el("ul", {}, [...new Map(d.posts.flatMap((p) => p.requisites || []).map((r) => [r.key, r])).values()].map((r) => el("li", {}, `${REQ_TYPE[r.kind] || r.kind}: ${r.display}`))),
     el("footer", { class: "muted small" }, "ПРУФ · SafeNet KZ · номера карт в отчёте замаскированы (6+4)."),
   );
+}
+
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  const form = m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
+  return `${n} ${form}`;
+}
+
+// Одна фраза для руководителя: масштаб, деньги, пруфы. Только факты из кейса, без оценок.
+function lead(c, posts, tl, edits) {
+  const days = Math.max(1, Math.round((new Date(c.last_seen) - new Date(c.first_seen)) / 864e5) + 1);
+  const parts = [`${plural(c.channels.length || 1, "канал", "канала", "каналов")} за ${plural(days, "день", "дня", "дней")} опубликовали ${plural(posts.length, "пост", "поста", "постов")}`
+    + ` (${c.tracks.map((t) => (TRACK[t] || t).toLowerCase()).join(", ")})`];
+  if (c.requisites.length) parts.push(`деньги собираются на ${plural(c.requisites.length, "реквизит", "реквизита", "реквизитов")}: ${c.requisites.slice(0, 3).join(", ")}`);
+  if (tl && tl.appearances > 1) parts.push(`один и тот же пруф показан ${tl.appearances} раз` + (edits.length ? `, суммы или даты правились ${plural(edits.length, "раз", "раза", "раз")}` : ""));
+  if (c.domains.length) parts.push(`ссылки ведут на ${c.domains.slice(0, 3).join(", ")}`);
+  return parts.join("; ") + ".";
 }
 
 function row(k, v) { return el("tr", {}, el("th", {}, k), el("td", {}, v)); }

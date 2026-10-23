@@ -17,6 +17,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
 button, select, input, textarea { font: inherit; color: inherit; }
+a.button { color: var(--accent); }
 button, a.button { cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 12px; text-decoration: none; display: inline-block; }
 button:hover, a.button:hover { border-color: var(--accent); }
 button:focus-visible, a:focus-visible, [tabindex]:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -93,6 +94,10 @@ svg.chart .bar:hover .seg { filter: brightness(1.12); }
 .case-list li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 8px; cursor: pointer; transition: border-color .15s; }
 .case-list li:hover { border-color: var(--accent); }
 .case-list li.active { outline: 2px solid var(--accent); }
+.case-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.prio { font-size: 11px; font-weight: 700; color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 0 6px; white-space: nowrap; }
+.reasons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.reasons span { font-size: 11px; background: var(--bg); border-radius: 4px; padding: 0 6px; color: var(--ink); }
 .case-list .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .status-pill { font-size: 12px; color: var(--muted); }
 .status-pill.confirmed { color: var(--high); font-weight: 600; } .status-pill.in_review { color: var(--accent); } .status-pill.dismissed { text-decoration: line-through; }

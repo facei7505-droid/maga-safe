@@ -109,5 +109,7 @@ def test_analyst_flow_end_to_end(server: str, browser) -> None:
     case_key = page.locator("#bank-rows button.link").first.inner_text()
     report.goto(f"{server}/static/report.html#{case_key}", wait_until="networkidle")
     assert f"Кейс {case_key}" in report.locator("h1").inner_text()
+    lead = report.locator(".r-lead").inner_text()
+    assert "3 канала" in lead and "+77019998877" in lead and "приоритет" in lead
 
     assert errors == []
