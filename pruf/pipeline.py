@@ -1,0 +1,178 @@
+"""Оркестрация приёма: нормализация → реестр ПРУФ → детектор → контекст графа → сохранение."""
+
+from __future__ import annotations
+
+import logging
+from collections import Counter
+from dataclasses import dataclass, field
+from typing import Any
+
+from pruf.config import Settings
+from pruf.detect.detector import Detector, SourceText
+from pruf.models import Evidence
+from pruf.normalize.audio import transcribe
+from pruf.normalize.text import normalize_text
+from pruf.registry.registry import ImageResult, ProofRegistry, TextResult, changes_to_json
+from pruf.storage.blobs import BlobStore
+from pruf.storage.db import Database
+
+log = logging.getLogger(__name__)
+RISKY_LEVELS = ("medium", "high")
+# Бренды и площадки: их домены и логотипы повторяются легально и не связывают кейсы.
+ALLOWLIST_DOMAINS = frozenset({
+    "kaspi.kz", "halykbank.kz", "egov.kz", "gov.kz", "nationalbank.kz", "instagram.com", "t.me", "telegram.me",
+    "wa.me", "chat.whatsapp.com", "tiktok.com", "youtube.com", "youtu.be", "vk.com", "google.com", "2gis.kz",
+})
+REUSED_PROOF_WEIGHT = 20
+REUSED_PROOF_STEP = 5  # за каждый следующий рискованный пост с тем же пруфом, до +20
+EDITED_DIGITS_WEIGHT = 20
+ELA_WEIGHT = 8
+TEXT_TEMPLATE_WEIGHT = 10
+RISKY_REQUISITE_WEIGHT = 20
+
+
+@dataclass(frozen=True)
+class Upload:
+    data: bytes
+    kind: str  # image | audio
+    ext: str = "bin"
+
+
+@dataclass(frozen=True)
+class Submission:
+    text: str | None = None
+    uploads: tuple[Upload, ...] = ()
+    transcript: str | None = None
+    source: str = "api"
+    channel: str | None = None
+    author: str | None = None
+    posted_at: str | None = None
+    external_id: str | None = None
+    label: str | None = None  # метка синтетики для eval, аналитику не показывается
+
+
+@dataclass
+class _Collected:
+    images: list[ImageResult] = field(default_factory=list)
+    texts: list[TextResult] = field(default_factory=list)
+    audio_posts: list[int] = field(default_factory=list)
+
+
+def _major_track(levels: dict[int, tuple[str, str | None, float]], post_ids: list[int]) -> str:
+    tracks = Counter(levels[p][1] for p in post_ids if p in levels and levels[p][1])
+    return tracks.most_common(1)[0][0] if tracks else "common"
+
+
+class Pruf:
+    """Фасад платформы: один объект на процесс."""
+
+    def __init__(self, settings: Settings, detector: Detector | None = None, ocr_enabled: bool = True):
+        self.settings = settings
+        self.db = Database(settings.db_path)
+        self.blobs = BlobStore(settings.blob_dir)
+        self.registry = ProofRegistry(self.db, self.blobs, ocr_enabled=ocr_enabled)
+        self.detector = detector or Detector(settings)
+        self.version = 0  # растёт при каждом приёме, по нему сбрасывается кэш графа
+
+    # ---------- контекст из реестра и графа ----------
+    def _proof_context(self, got: _Collected) -> list[Evidence]:
+        out: list[Evidence] = []
+        image_posts = sorted({m.post_id for r in got.images for m in r.matches if m.post_id > 0})
+        text_posts = sorted({p for r in got.texts for _, p, _ in r.matches if p > 0})
+        all_posts = sorted(set(image_posts) | set(text_posts) | set(got.audio_posts))
+        levels = self.db.post_levels(all_posts)
+        risky_img = [p for p in image_posts + got.audio_posts if levels.get(p, ("low",))[0] in RISKY_LEVELS]
+        if risky_img:
+            channels = sorted({c for c in (self.db.get_post(p).get("channel") for p in risky_img[:20]) if c})
+            out.append(Evidence("registry.reused_proof", _major_track(levels, risky_img),
+                                f"Этот пруф уже встречался в {len(set(risky_img))} постах с признаками схем",
+                                REUSED_PROOF_WEIGHT + REUSED_PROOF_STEP * min(len(set(risky_img)) - 1, 4),
+                                "registry", quote=", ".join(channels[:5])))
+        elif image_posts:
+            out.append(Evidence("registry.reused_benign", "common",
+                                f"Изображение повторяется в {len(image_posts)} постах без признаков схем: повтор сам по себе не риск",
+                                0, "registry"))
+        risky_txt = [p for p in text_posts if levels.get(p, ("low",))[0] in RISKY_LEVELS]
+        if risky_txt:
+            out.append(Evidence("registry.text_template", _major_track(levels, risky_txt),
+                                f"Текст почти совпадает с {len(risky_txt)} постами с признаками схем (шаблон рассылки)",
+                                TEXT_TEMPLATE_WEIGHT, "registry"))
+        edits = [c for r in got.images for m in r.matches for c in m.changes if c.kind in ("amount", "date")]
+        if edits:
+            sample = "; ".join(dict.fromkeys(f"{c.before} → {c.after}" for c in edits[:6]))
+            out.append(Evidence("registry.edited_digits", "common",
+                                "На копиях одного и того же пруфа отличаются суммы или даты", EDITED_DIGITS_WEIGHT,
+                                "registry", quote=sample))
+        digit_anoms = [a for r in got.images for a in r.anomalies if any(ch.isdigit() for ch in a.text)]
+        if digit_anoms:
+            out.append(Evidence("registry.ela", "common", "Признаки локальной правки изображения в зоне цифр (ELA)",
+                                ELA_WEIGHT, "registry", quote=", ".join(a.text for a in digit_anoms[:3])))
+        return out
+
+    def _requisite_context(self, post_id: int, requisites: tuple[dict, ...], links: tuple[dict, ...]) -> list[Evidence]:
+        out: list[Evidence] = []
+        for req in requisites:
+            others = [p for p in self.db.posts_with_requisite(req["key"]) if p != post_id]
+            if not others:
+                continue
+            levels = self.db.post_levels(others)
+            risky = [p for p in others if levels[p][0] in RISKY_LEVELS]
+            if risky:
+                tracks = sorted({levels[p][1] for p in risky if levels[p][1]})
+                out.append(Evidence(f"graph.requisite.{req['kind']}", _major_track(levels, risky),
+                                    f"Реквизит встречался в {len(risky)} постах с признаками схем (треки: {', '.join(tracks)})",
+                                    RISKY_REQUISITE_WEIGHT, "graph", quote=req["display"]))
+        return out
+
+    # ---------- приём ----------
+    def ingest(self, sub: Submission) -> dict[str, Any]:
+        post_id = self.db.create_post(source=sub.source, channel=sub.channel, author=sub.author, posted_at=sub.posted_at,
+                                      text=sub.text, external_id=sub.external_id, label=sub.label)
+        got = _Collected()
+        transcript = sub.transcript
+        for up in sub.uploads:
+            if up.kind == "image":
+                got.images.append(self.registry.register_image(post_id, up.data))
+            elif up.kind == "audio":
+                _aid, same = self.registry.register_audio(post_id, up.data, up.ext)
+                got.audio_posts.extend(same)
+                if not transcript:
+                    transcript = transcribe(up.data, "." + up.ext)
+        if sub.text:
+            text_res = self.registry.register_text(post_id, normalize_text(sub.text).folded)
+            if text_res:
+                got.texts.append(text_res)
+        ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
+        sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""), SourceText("voice", transcript or "")]
+
+        first = self.detector.detect(sources)
+        context = self._proof_context(got)
+        reqs = first.analysis.requisites
+        for r in first.requisites:
+            self.db.link_requisite(post_id, r.kind, r.key, r.display)
+        context += self._requisite_context(post_id, reqs, first.analysis.links)
+        for link in first.links:
+            if link.domain not in ALLOWLIST_DOMAINS:
+                self.db.add_link(post_id, link.url, link.domain, link.resolved)
+        detection = self.detector.detect(sources, context) if context else first
+        analysis = detection.analysis
+        self.db.update_post_analysis(post_id, score=analysis.score, level=analysis.level, track=analysis.track,
+                                     analysis=analysis.to_dict(), ocr_text=ocr_text, transcript=transcript)
+        self.version += 1
+        return {
+            "post_id": post_id,
+            "analysis": analysis.to_dict(),
+            "proofs": [
+                {"artifact_id": r.artifact_id, "sha256": r.sha256, "ocr_text": r.ocr_text,
+                 "matches": [{"artifact_id": m.artifact_id, "post_id": m.post_id, "distance": m.distance,
+                              "changes": changes_to_json(m.changes)} for m in r.matches[:50]],
+                 "match_count": len(r.matches),
+                 "anomalies": [{"text": a.text, "box": a.box, "ratio": a.ratio} for a in r.anomalies]}
+                for r in got.images
+            ],
+            "text_matches": [{"artifact_id": a, "post_id": p, "similarity": round(s, 3)} for r in got.texts for a, p, s in r.matches[:50]],
+        }
+
+    def analyze_only(self, text: str) -> dict[str, Any]:
+        """Быстрая проверка без сохранения (бот, eval)."""
+        return self.detector.detect([SourceText("text", text)]).analysis.to_dict()

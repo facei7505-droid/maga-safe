@@ -1,0 +1,102 @@
+"""Итоговый балл 0–100 по трекам: признаки + ML + сигналы реестра и графа.
+
+Правила расчёта (они же «методика» для жюри):
+1. Баллы признаков трека суммируются (каждый признак один раз). Общие признаки
+   добавляются, только если у трека есть свой положительный признак.
+2. rule_score = 100 * (1 - exp(-points / SATURATION)).
+3. Если есть ML: score = 0.65 * rule_score + 0.35 * 100 * p(track). Без признаков
+   ML даёт максимум ML_ONLY_CAP (средний риск, дальше решает LLM или аналитик).
+4. Высокий риск только при обязательном сочетании: два «ядровых» признака трека
+   или ядровой признак + просьба перевести деньги. Иначе потолок HIGH_THRESHOLD - 1.
+5. Стоп-признаки (бесплатное участие, правила, антиреклама) вычитают баллы и
+   опускают потолок до среднего.
+6. Контекст (повтор пруфа в рискованных постах, правка пруфа, реквизит из рискованных
+   кейсов) добавляется после, отдельной строкой объяснения. Без признаков в тексте он
+   учитывается, только если это сильный сигнал своего трека (повтор пруфа или реквизит
+   из рискованных постов), то есть повтор сам по себе риском не считается.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterable, Mapping
+
+from pruf.detect.lexicon import TRACK_LABELS, TRACKS
+from pruf.models import HIGH_THRESHOLD, MEDIUM_THRESHOLD, Analysis, Evidence, TrackScore, level_for
+
+SATURATION = 35.0
+ML_WEIGHT = 0.35
+ML_ONLY_CAP = 50.0
+STOP_CAP = HIGH_THRESHOLD - 1
+NO_COMBO_CAP = HIGH_THRESHOLD - 1
+STRONG_CONTEXT = 15.0  # сигнал реестра/графа такой силы учитывается даже без признаков в тексте
+
+
+def _unique_by_feature(items: Iterable[Evidence]) -> dict[str, Evidence]:
+    best: dict[str, Evidence] = {}
+    for ev in items:
+        if ev.feature_id not in best:
+            best[ev.feature_id] = ev
+    return best
+
+
+def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | None,
+                context: list[Evidence]) -> TrackScore:
+    own = _unique_by_feature(e for e in evidence if e.track == track)
+    common = _unique_by_feature(e for e in evidence if e.track == "common")
+    has_positive = any(e.weight > 0 for e in own.values())
+    points = sum(e.weight for e in own.values())
+    if has_positive:
+        points += sum(e.weight for e in common.values())
+    rule_score = 100.0 * (1.0 - math.exp(-max(points, 0.0) / SATURATION))
+
+    p_track = ml.get(track) if ml else None
+    if p_track is None:
+        score = rule_score
+    elif has_positive:
+        score = (1 - ML_WEIGHT) * rule_score + ML_WEIGHT * 100.0 * p_track
+    else:
+        score = min(ML_ONLY_CAP, 100.0 * p_track * ML_WEIGHT * 2)
+
+    capped: str | None = None
+    core_count = sum(1 for e in own.values() if e.core)
+    has_transfer = "common.kaspi_transfer" in common
+    if score >= HIGH_THRESHOLD and not (core_count >= 2 or (core_count >= 1 and has_transfer)):
+        score, capped = NO_COMBO_CAP, "нет обязательного сочетания признаков для высокого риска"
+    if any(e.stop for e in own.values()) and score > STOP_CAP:
+        score, capped = STOP_CAP, "есть признаки легальности"
+
+    track_context = _unique_by_feature(c for c in context if c.track in (track, "common")).values()
+    strong_own = any(c.track == track and c.weight >= STRONG_CONTEXT for c in track_context)
+    if has_positive or score >= MEDIUM_THRESHOLD or strong_own:
+        score += sum(c.weight for c in track_context)
+    score = max(0.0, min(100.0, score))
+    return TrackScore(track=track, score=round(score, 1), level=level_for(score), rule_points=round(points, 1),
+                      ml_probability=None if p_track is None else round(p_track, 3), capped_reason=capped)
+
+
+def summarize(level: str, track: str | None, evidence: list[Evidence]) -> str:
+    if track is None or level == "low":
+        legit = [e.label for e in evidence if e.stop]
+        if legit:
+            return "Существенных признаков схем не найдено. Найдены признаки легальности: " + "; ".join(dict.fromkeys(legit)) + "."
+        return "Существенных признаков схем не найдено."
+    labels = [e.label for e in evidence if e.weight > 0 and e.track in (track, "common")]
+    joined = "; ".join(dict.fromkeys(labels))
+    return f"Найдены признаки: {TRACK_LABELS[track].lower()}. {joined}. Решение принимает аналитик."
+
+
+def combine(evidence: list[Evidence], ml: Mapping[str, float] | None = None,
+            context: list[Evidence] | None = None, requisites: tuple = (), links: tuple = (),
+            llm_used: bool = False) -> Analysis:
+    context = context or []
+    tracks = tuple(score_track(t, evidence, ml, context) for t in TRACKS)
+    top = max(tracks, key=lambda t: t.score)
+    track = top.track if top.score >= MEDIUM_THRESHOLD else None
+    relevant = [e for e in evidence + context if track is None or e.track in (track, "common") or e.stop]
+    return Analysis(
+        score=top.score, level=top.level, track=track, tracks=tracks,
+        evidence=tuple(sorted(relevant, key=lambda e: -abs(e.weight))),
+        summary=summarize(top.level, track, evidence + context),
+        requisites=requisites, links=links, llm_used=llm_used,
+    )
