@@ -4,13 +4,16 @@
 1. Баллы признаков трека суммируются (каждый признак один раз). Общие признаки
    добавляются, только если у трека есть свой положительный признак.
 2. rule_score = 100 * (1 - exp(-points / SATURATION)).
-3. Если есть ML: score = 0.65 * rule_score + 0.35 * 100 * p(track). Без признаков
-   ML даёт максимум ML_ONLY_CAP (средний риск, дальше решает LLM или аналитик).
-4. Высокий риск только при обязательном сочетании: два «ядровых» признака трека
+3. Если есть ML: score = max(rule_score, 0.65 * rule_score + 0.35 * 100 * p(track)),
+   то есть модель может только поднять балл. Без признаков ML даёт максимум ML_ONLY_CAP
+   (средний риск, дальше решает LLM или аналитик).
+4. Один-единственный признак трека без общих признаков даёт не больше низкого риска:
+   риск строится на сочетании сигналов.
+5. Высокий риск только при обязательном сочетании: два «ядровых» признака трека
    или ядровой признак + просьба перевести деньги. Иначе потолок HIGH_THRESHOLD - 1.
-5. Стоп-признаки (бесплатное участие, правила, антиреклама) вычитают баллы и
+6. Стоп-признаки (бесплатное участие, правила, антиреклама) вычитают баллы и
    опускают потолок до среднего.
-6. Контекст (повтор пруфа в рискованных постах, правка пруфа, реквизит из рискованных
+7. Контекст (повтор пруфа в рискованных постах, правка пруфа, реквизит из рискованных
    кейсов) добавляется после, отдельной строкой объяснения. Без признаков в тексте он
    учитывается, только если это сильный сигнал своего трека (повтор пруфа или реквизит
    из рискованных постов), то есть повтор сам по себе риском не считается.
@@ -28,6 +31,7 @@ SATURATION = 35.0
 ML_WEIGHT = 0.35
 ML_ONLY_CAP = 50.0
 STOP_CAP = HIGH_THRESHOLD - 1
+SINGLE_CAP = MEDIUM_THRESHOLD - 1
 NO_COMBO_CAP = HIGH_THRESHOLD - 1
 STRONG_CONTEXT = 15.0  # сигнал реестра/графа такой силы учитывается даже без признаков в тексте
 
@@ -54,11 +58,14 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     if p_track is None:
         score = rule_score
     elif has_positive:
-        score = (1 - ML_WEIGHT) * rule_score + ML_WEIGHT * 100.0 * p_track
+        score = max(rule_score, (1 - ML_WEIGHT) * rule_score + ML_WEIGHT * 100.0 * p_track)
     else:
         score = min(ML_ONLY_CAP, 100.0 * p_track * ML_WEIGHT * 2)
 
     capped: str | None = None
+    positives = [e for e in own.values() if e.weight > 0]
+    if len(positives) == 1 and not any(e.weight > 0 for e in common.values()) and score > SINGLE_CAP:
+        score, capped = SINGLE_CAP, "найден только один признак, нужен хотя бы ещё один"
     core_count = sum(1 for e in own.values() if e.core)
     has_transfer = "common.kaspi_transfer" in common
     if score >= HIGH_THRESHOLD and not (core_count >= 2 or (core_count >= 1 and has_transfer)):
