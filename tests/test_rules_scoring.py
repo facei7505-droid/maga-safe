@@ -322,7 +322,7 @@ def test_negative_points_floor_at_zero() -> None:
 def test_combine_picks_top_track_and_filters_evidence() -> None:
     # Arrange
     evidence = [ev("casino.terms", "casino", 30, core=True), ev("casino.mirror", "casino", 30, core=True),
-                ev("lottery.prize", "lottery", 5, core=True), ev("pyramid.awareness", "pyramid", -35, stop=True)]
+                ev("lottery.prize", "lottery", 5, core=True), ev("pyramid.bank_product", "pyramid", -35, stop=True)]
 
     # Act
     analysis = combine(evidence, requisites=({"kind": "phone"},), links=({"url": "x"},))
@@ -331,8 +331,8 @@ def test_combine_picks_top_track_and_filters_evidence() -> None:
     assert analysis.track == "casino"
     ids = [e.feature_id for e in analysis.evidence]
     assert "lottery.prize" not in ids
-    assert "pyramid.awareness" in ids  # стоп-признаки показываются всегда
-    assert ids[0] == "pyramid.awareness"  # сортировка по |весу|
+    assert "pyramid.bank_product" in ids  # стоп-признаки показываются всегда
+    assert ids[0] == "pyramid.bank_product"  # сортировка по |весу|
     data = analysis.to_dict()
     assert data["level_label"] == "высокий"
     assert data["requisites"] == ({"kind": "phone"},) or data["requisites"] == [{"kind": "phone"}]
@@ -340,3 +340,36 @@ def test_combine_picks_top_track_and_filters_evidence() -> None:
 
 def test_summarize_low_without_stop_features() -> None:
     assert summarize("low", None, []) == "Существенных признаков схем не найдено."
+
+
+def test_warning_on_one_track_caps_every_track_without_money_request_or_contact() -> None:
+    # Arrange: расследование о казино: новостная рамка без реквизита и ссылки
+    evidence = [ev("casino.terms", "casino", 40, core=True), ev("casino.mirror", "casino", 40, core=True),
+                ev("casino.bonus", "casino", 30), ev("common.news.awareness", "common", -45, stop=True)]
+
+    # Act
+    analysis = combine(evidence)
+
+    # Assert
+    casino = next(t for t in analysis.tracks if t.track == "casino")
+    assert analysis.level == "low"
+    assert casino.capped_reason == "похоже на предупреждение или новость о схеме"
+
+
+def test_warning_with_requisite_keeps_medium_cap_only() -> None:
+    # Arrange: «осторожно, мошенники» в рекламе с номером для перевода остаётся в очереди
+    evidence = [ev("casino.terms", "casino", 22, core=True), ev("casino.mirror", "casino", 22, core=True),
+                ev("casino.bonus", "casino", 16), ev("common.requisite", "common", 6),
+                ev("casino.awareness", "casino", -45, stop=True)]
+
+    # Act / Assert
+    assert combine(evidence).level == "medium"
+
+
+def test_casino_specific_awareness_does_not_cap_other_tracks() -> None:
+    # Arrange: «подпольные казино — зло» в посте с платным розыгрышем
+    evidence = [ev("lottery.prize", "lottery", 14, core=True), ev("lottery.entry_fee", "lottery", 30, core=True),
+                ev("common.kaspi_transfer", "common", 14), ev("casino.awareness", "casino", -45, stop=True)]
+
+    # Act / Assert
+    assert combine(evidence).track == "lottery" and combine(evidence).level == "high"

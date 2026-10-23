@@ -122,12 +122,13 @@ class Detector:
             # не должен попасть ни в базу, ни в экспорт, ни в LLM. Реквизиты берём из оригинала.
             norm = normalize_text(redact_cards(src.text) or "")
             folded_parts.append(norm.folded)
-            evidence.extend(find_features(norm, src.source))
-            for req in extract_requisites(src.text, self._hmac_key):
+            src_reqs = extract_requisites(src.text, self._hmac_key)
+            found_links = extract_links(norm.original)
+            evidence.extend(find_features(norm, src.source, keep_quoted=bool(src_reqs or found_links)))
+            for req in src_reqs:
                 if req.key not in req_keys:
                     req_keys.add(req.key)
                     requisites.append(req)
-            found_links = extract_links(norm.original)
             if self._settings.resolve_links:
                 found_links = [resolve_shortener(link) if i < MAX_RESOLVE_PER_POST else link
                                for i, link in enumerate(found_links)]

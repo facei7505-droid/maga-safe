@@ -12,6 +12,14 @@ from pruf.normalize.text import NormText
 QUOTE_CONTEXT = 25
 MAX_QUOTES_PER_FEATURE = 2
 # Цитата внутри поста: «вы выиграли iPhone, оплатите доставку». В предупреждении это пересказ схемы, а не сама схема
+# Совет «не переводите деньги» и «ақша аудармаңыз» — не просьба о деньгах. Касается только признаков-действий.
+NEGATABLE = frozenset({"common.kaspi_transfer", "common.card_phish", "lottery.entry_fee", "lottery.prize_fee", "pyramid.entry"})
+NEGATION_WINDOW = 20
+_NEGATED_VERB_RE = re.compile(
+    # «мошенники просят оплатить» — пересказ, а не просьба
+    r"(?<!\w)(?:не|никогда не|нельзя|просят|требуют|предлагают|заставляют|уговаривают)\s+(?:(?:надо|нужно|стоит|следует|спешите|просит|просят|требует|будет)\s+)?"
+    r"(?:переве|перевод|перечисл|переда|перекид|опла|запла|скидыв|скин|кидай|отправ|плат|внос|внес|покуп|куп|вводи|введ|сообща|диктов|назыв)")
+_KK_NEG_IMPERATIVE_RE = re.compile(r"\w(?:ма|ме|ба|бе|па|пе)(?:ныз|низ|ндар)(?!\w)")
 _QUOTED_RE = re.compile(r"«[^»\n]{1,300}»|“[^”\n]{1,300}”|„[^“\n]{1,300}“|\"[^\"\n]{1,300}\"")
 
 
@@ -20,7 +28,7 @@ def _compiled() -> tuple[tuple[Feature, tuple], ...]:
     return tuple((f, f.compiled()) for f in FEATURES)
 
 
-def find_features(text: NormText, source: str = "text") -> list[Evidence]:
+def find_features(text: NormText, source: str = "text", keep_quoted: bool = False) -> list[Evidence]:
     """Все срабатывания признаков; один признак может дать до двух цитат."""
     found: list[Evidence] = []
     if not text.folded.strip():
@@ -32,6 +40,8 @@ def find_features(text: NormText, source: str = "text") -> list[Evidence]:
             for match in pattern.finditer(text.folded):
                 if hits >= MAX_QUOTES_PER_FEATURE:
                     break
+                if feature.id in NEGATABLE and _negated(text.folded, match.start(), match.end()):
+                    continue
                 span = text.original_span(match.start(), match.end())
                 if span in seen_spans:
                     continue
@@ -42,7 +52,20 @@ def find_features(text: NormText, source: str = "text") -> list[Evidence]:
                     stop=feature.stop, core=feature.core,
                 ))
                 hits += 1
-    return _drop_quoted_in_warnings(found, text.original)
+    # Если в посте есть реквизит или ссылка, кавычки не спасают: «Наш «розыгрыш, участие 500 тг» настоящий» — реклама
+    return found if keep_quoted else _drop_quoted_in_warnings(found, text.original)
+
+
+def _negated(folded: str, start: int, end: int) -> bool:
+    """Действие под отрицанием: «не переводите на каспи», «каспиге аудармаңыз»."""
+    # окно не переходит через знак препинания: «не переживайте, переведите» — не отрицание перевода
+    left = folded[max(0, start - NEGATION_WINDOW):start]
+    left = re.split(r"[,.!?;:\n]", left)[-1]
+    if _NEGATED_VERB_RE.search(left + folded[start:end]):
+        return True
+    # казахское отрицание стоит в глаголе после дополнения: «деректерін енгізбеңіз», «каспиге аудармаңыз»
+    tail = re.match(r"\w*(?:\s+\w+){0,2}", folded[end:])
+    return bool(_KK_NEG_IMPERATIVE_RE.search(folded[max(0, start - NEGATION_WINDOW):end + tail.end()]))
 
 
 def _drop_quoted_in_warnings(found: list[Evidence], original: str) -> list[Evidence]:

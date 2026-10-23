@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import sys
@@ -31,14 +32,30 @@ from pruf.synth.generator import SynthPost, read_jsonl
 LEVELS_POS = {"medium": ("medium", "high"), "high": ("high",)}
 # Каждый слепой набор пишет отдельный агент без доступа к коду; на нём только измеряем. После отчёта набор
 # считается «потраченным»: он переходит в dev, его ошибки можно разбирать, а следующий раунд проверяется
-# на новом наборе. v1 и v2 уже в dev; v3 опубликован в раунде 3, следующий раунд требует v4.
+# на новом наборе. v1–v3 уже в dev; v4 опубликован в раунде 4, следующий раунд требует v5.
 BLIND_HISTORY = (
     ("handwritten_blind (v1)", "раунд 1, первый замер", "0,913", "0,875", "0,125"),
     ("handwritten_blind_v2", "раунд 2, до правок", "0,793", "0,639", "0,250"),
     ("handwritten_blind_v2", "раунд 2, после правок по своему dev-набору", "0,765", "0,722", "0,333"),
     ("handwritten_blind_v3", "код раунда 1 на этом наборе, для сравнения", "0,692", "0,450", "0,200"),
     ("handwritten_blind_v3", "раунд 3, первый замер", "0,857", "0,750", "0,125"),
+    ("handwritten_blind_v4", "код до раунда 2, для сравнения", "0,761", "0,438", "0,138"),
+    ("handwritten_blind_v4", "код раунда 3, для сравнения", "0,852", "0,650", "0,113"),
+    ("handwritten_blind_v4", "раунд 4, первый замер", "0,969", "0,775", "0,025"),
+    ("handwritten_blind_v4", "раунд 4, после правила против маскировки «осторожно, мошенники» + реквизит", "0,954", "0,775", "0,037"),
+    ("handwritten_blind_v4", "раунд 4, после исправлений ревью (уклонения через вопрос, кавычки, «не переживайте»)", "0,939", "0,775", "0,050"),
 )
+
+
+def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% доверительный интервал Уилсона для доли k из n: на 160 постах ±5–9 п.п. — это честнее точки."""
+    if n == 0:
+        return 0.0, 0.0
+    p = k / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return round(max(0.0, c - h), 3), round(min(1.0, c + h), 3)
 
 
 def metrics(rows: list[tuple[SynthPost, str, str | None]], min_level: str) -> dict:
@@ -175,7 +192,10 @@ def to_markdown(report: dict) -> str:
     for mode, variants in report["results"].items():
         if mode.startswith("blind:"):
             o = variants["rules+ml"]["medium"]["overall"]
-            lines.append(f"| {mode[6:]} | сейчас | {o['precision']} | {o['recall']} | {o['fpr']} |")
+            ci = (wilson(o["tp"], o["tp"] + o["fp"]), wilson(o["tp"], o["tp"] + o["fn"]), wilson(o["fp"], o["fp"] + o["tn"]))
+            lines.append(f"| {mode[6:]} | сейчас | {o['precision']} ({ci[0][0]}–{ci[0][1]}) | {o['recall']} ({ci[1][0]}–{ci[1][1]}) "
+                         f"| {o['fpr']} ({ci[2][0]}–{ci[2][1]}) |")
+    lines += ["", "В скобках 95% интервал Уилсона.", ""]
     lines.append("")
     lines += ["Синтетика сгенерирована нашим генератором, поэтому цифры оптимистичны; главное в них — FPR на "
               "трудных легальных примерах (бесплатные конкурсы, депозиты, предупреждения, личные переводы, сборы)."]
@@ -188,11 +208,12 @@ def main() -> None:
     ap.add_argument("--model", type=Path, default=Path("models/clf.joblib"))
     ap.add_argument("--mode", choices=["text", "full", "both"], default="both")
     ap.add_argument("--handwritten", type=Path, nargs="*",
-                    default=[Path("eval/handwritten.jsonl"), Path("eval/dev_round2.jsonl"),
-                             Path("eval/handwritten_blind.jsonl"), Path("eval/handwritten_blind_v2.jsonl")],
+                    default=[Path("eval/handwritten.jsonl"), Path("eval/dev_round2.jsonl"), Path("eval/dev_round4.jsonl"),
+                             Path("eval/handwritten_blind.jsonl"), Path("eval/handwritten_blind_v2.jsonl"),
+                             Path("eval/handwritten_blind_v3.jsonl")],
                     help="ручные dev-наборы, не из генератора: на них правила настраиваются")
     ap.add_argument("--blind", type=Path, nargs="*",
-                    default=[Path("eval/handwritten_blind_v3.jsonl")],
+                    default=[Path("eval/handwritten_blind_v4.jsonl")],
                     help="слепые наборы: написаны до правок агентом без доступа к коду, на них только измеряем")
     ap.add_argument("--report", type=Path, default=Path("reports/eval.json"))
     ap.add_argument("--markdown", type=Path, default=Path("docs/metrics.md"))

@@ -12,7 +12,11 @@
 5. Высокий риск только при обязательном сочетании: два «ядровых» признака трека
    или ядровой признак + просьба перевести деньги (или ввести данные карты). Иначе потолок HIGH_THRESHOLD - 1.
 6. Стоп-признаки (бесплатное участие, правила, антиреклама) вычитают баллы и
-   опускают потолок до среднего.
+   опускают потолок до среднего. Предупреждение или новость о схеме действует на все
+   треки; если при нём нет просьбы о деньгах, реквизита или ссылки, потолок — низкий риск,
+   а если есть — это маскировка: баллы не снимаются, потолок «средний».
+   Признаки-действия под отрицанием («не переводите») и фразы в кавычках внутри
+   предупреждения не считаются.
 7. Контекст (повтор пруфа в рискованных постах, правка пруфа, реквизит из рискованных
    кейсов) добавляется после, отдельной строкой объяснения. Без признаков в тексте он
    учитывается, только если это сильный сигнал своего трека (повтор пруфа или реквизит
@@ -42,6 +46,13 @@ STOP_CAP = HIGH_THRESHOLD - 1
 SINGLE_CAP = MEDIUM_THRESHOLD - 1
 CONTEXT_ONLY_CAP = HIGH_THRESHOLD - 1
 NO_COMBO_CAP = HIGH_THRESHOLD - 1
+AWARENESS_SUFFIX = ".awareness"
+NEWS_WARNING = "common.news.awareness"
+SHARED_WARNINGS = frozenset({"common.awareness", NEWS_WARNING})  # на все треки; «рейд», «подпольн» — только казино
+# Реквизит или ссылка: у настоящей рекламы схемы есть куда платить или переходить, у новости и предупреждения обычно нет
+CONTACT_EVIDENCE = frozenset({"common.requisite", "common.kaspi_pay_link", "common.shortener", "common.brand_lookalike", "casino.domain"})
+# «Пиши в лс», «ссылка в шапке» — призыв к действию в рекламе, но в новости это описание схемы
+SOFT_CONTACT = frozenset({"common.dm_redirect", "casino.hidden_promo"})
 # Вспомогательные признаки сами трек не открывают: «3,5 млн» в сборе на операцию — не розыгрыш
 AUX_FEATURES = frozenset({"lottery.big_prize", "pyramid.closed_group", "pyramid.regular_payout"})
 MONEY_ASKS = frozenset({"common.kaspi_transfer", "common.card_phish"})  # просьба отдать деньги или данные карты
@@ -59,9 +70,20 @@ def _unique_by_feature(items: Iterable[Evidence]) -> dict[str, Evidence]:
 def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | None,
                 context: list[Evidence]) -> TrackScore:
     own = _unique_by_feature(e for e in evidence if e.track == track)
-    common = _unique_by_feature(e for e in evidence if e.track == "common")
+    # Предупреждение или новость о схеме относится ко всем трекам: разбор пирамиды не делает пост розыгрышем
+    warning = next((e for e in evidence if e.feature_id in SHARED_WARNINGS), None)
+    is_news = any(e.feature_id == NEWS_WARNING for e in evidence)
+    if warning and not any(f.endswith(AWARENESS_SUFFIX) for f in own):
+        own[f"{track}{AWARENESS_SUFFIX}"] = warning
+    common = _unique_by_feature(e for e in evidence if e.track == "common" and not e.stop)
     has_positive = any(e.weight > 0 and e.feature_id not in AUX_FEATURES for e in own.values())
-    points = sum(e.weight for e in own.values())
+    has_transfer = bool(MONEY_ASKS & common.keys())
+    contacts = CONTACT_EVIDENCE if is_news else CONTACT_EVIDENCE | SOFT_CONTACT
+    has_contact = bool(contacts & (common.keys() | own.keys()))
+    # «Осторожно, мошенники!» рядом с реквизитом или просьбой заплатить — маскировка, а не предупреждение:
+    # баллы оно не снимает, остаётся только потолок «средний»
+    disguise = has_transfer or has_contact
+    points = sum(e.weight for e in own.values() if not (disguise and e.feature_id.endswith(AWARENESS_SUFFIX)))
     if has_positive:
         points += sum(e.weight for e in common.values())
     rule_score = 100.0 * (1.0 - math.exp(-max(points, 0.0) / SATURATION))
@@ -82,7 +104,6 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
 
     # Потолки применяются после контекста: связи с другими постами не отменяют правила методики.
     positives = [e for e in own.values() if e.weight > 0]
-    has_transfer = bool(MONEY_ASKS & common.keys())
     if not has_positive and track_context and score > CONTEXT_ONLY_CAP:
         score, capped = CONTEXT_ONLY_CAP, "собственных признаков нет, только связь с рискованными постами"
     if len(positives) == 1 and not has_transfer and not track_context and score > SINGLE_CAP:
@@ -90,22 +111,30 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     core_count = sum(1 for e in own.values() if e.core)
     if score >= HIGH_THRESHOLD and not (core_count >= 2 or (core_count >= 1 and (has_transfer or track_context))):
         score, capped = NO_COMBO_CAP, "нет обязательного сочетания признаков для высокого риска"
-    if any(e.stop for e in own.values()) and score > STOP_CAP:
+    if warning and not disguise and (is_news or core_count < 2) and score > SINGLE_CAP:
+        score, capped = SINGLE_CAP, "похоже на предупреждение или новость о схеме"
+    elif any(e.stop for e in own.values()) and score > STOP_CAP:
         score, capped = STOP_CAP, "есть признаки легальности"
     score = max(0.0, min(100.0, score))
     return TrackScore(track=track, score=round(score, 1), level=level_for(score), rule_points=round(points, 1),
                       ml_probability=None if p_track is None else round(p_track, 3), capped_reason=capped)
 
 
-def summarize(level: str, track: str | None, evidence: list[Evidence]) -> str:
+def summarize(level: str, track: str | None, evidence: list[Evidence], capped: str | None = None) -> str:
+    legit = list(dict.fromkeys(e.label for e in evidence if e.stop))
     if track is None or level == "low":
-        legit = [e.label for e in evidence if e.stop]
+        out = "Существенных признаков схем не найдено."
         if legit:
-            return "Существенных признаков схем не найдено. Найдены признаки легальности: " + "; ".join(dict.fromkeys(legit)) + "."
-        return "Существенных признаков схем не найдено."
+            out = "Существенных признаков схем не найдено. Найдены признаки легальности: " + "; ".join(legit) + "."
+        return out + (f" Балл ограничен: {capped}." if capped else "")
     labels = [e.label for e in evidence if (e.weight > 0 or e.source == "ml") and e.track in (track, "common")]
     joined = "; ".join(dict.fromkeys(labels)) or "только косвенные сигналы"
-    return f"Найдены признаки: {TRACK_LABELS[track].lower()}. {joined}. Решение принимает аналитик."
+    out = f"Найдены признаки: {TRACK_LABELS[track].lower()}. {joined}."
+    if legit:
+        out += " Есть и признаки легальности: " + "; ".join(legit) + "."
+    if capped:
+        out += f" Балл ограничен: {capped}."
+    return out + " Решение принимает аналитик."
 
 
 def combine(evidence: list[Evidence], ml: Mapping[str, float] | None = None,
@@ -125,6 +154,6 @@ def combine(evidence: list[Evidence], ml: Mapping[str, float] | None = None,
     return Analysis(
         score=top.score, level=top.level, track=track, tracks=tracks,
         evidence=tuple(sorted(relevant, key=lambda e: -abs(e.weight))),
-        summary=summarize(top.level, track, relevant),
+        summary=summarize(top.level, track, relevant, top.capped_reason),
         requisites=requisites, links=links, llm_status=llm_status,
     )
