@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pruf.config import Settings
 from pruf.detect.detector import Detector, SourceText
 from pruf.models import Evidence
 from pruf.normalize.audio import transcribe
+from pruf.normalize.links import Link
+from pruf.normalize.requisites import redact_cards
 from pruf.normalize.text import normalize_text
+from pruf.registry.hashing import open_image
 from pruf.registry.registry import ImageResult, ProofRegistry, TextResult, changes_to_json
 from pruf.storage.blobs import BlobStore
 from pruf.storage.db import Database
@@ -63,6 +67,13 @@ def _major_track(levels: dict[int, tuple[str, str | None, float]], post_ids: lis
     return tracks.most_common(1)[0][0] if tracks else "common"
 
 
+def _links_cases(link: Link) -> bool:
+    """Связывает ли домен посты в кейс: не бренды, не мессенджеры, не нераскрытые сокращатели."""
+    if link.domain in ALLOWLIST_DOMAINS or link.is_messenger:
+        return False
+    return not (link.is_shortener and not link.resolved)
+
+
 class Pruf:
     """Фасад платформы: один объект на процесс."""
 
@@ -73,6 +84,9 @@ class Pruf:
         self.registry = ProofRegistry(self.db, self.blobs, ocr_enabled=ocr_enabled)
         self.detector = detector or Detector(settings)
         self.version = 0  # растёт при каждом приёме, по нему сбрасывается кэш графа
+        # Один писатель: реестр (поиск → запись → добавление в индекс) и счётчик версии должны
+        # обновляться атомарно, иначе две одновременные копии одного пруфа не найдут друг друга.
+        self._ingest_lock = threading.Lock()
 
     # ---------- контекст из реестра и графа ----------
     def _proof_context(self, got: _Collected) -> list[Evidence]:
@@ -126,44 +140,62 @@ class Pruf:
 
     # ---------- приём ----------
     def ingest(self, sub: Submission) -> dict[str, Any]:
-        post_id = self.db.create_post(source=sub.source, channel=sub.channel, author=sub.author, posted_at=sub.posted_at,
-                                      text=sub.text, external_id=sub.external_id, label=sub.label)
+        # Сначала проверяем файлы, чтобы битая картинка не оставила пустой пост.
+        images = [(up, open_image(up.data)) for up in sub.uploads if up.kind == "image"]
+        with self._ingest_lock:
+            post_id = self.db.create_post(source=sub.source, channel=sub.channel, author=sub.author,
+                                          posted_at=sub.posted_at, text=redact_cards(sub.text),
+                                          external_id=sub.external_id, label=sub.label)
+            try:
+                return self._process(post_id, sub, images)
+            except Exception as exc:
+                self.db.mark_post_failed(post_id, type(exc).__name__)
+                raise
+
+    def _process(self, post_id: int, sub: Submission, images: list) -> dict[str, Any]:
         got = _Collected()
+        degraded: list[dict[str, str]] = []
         transcript = sub.transcript
+        for up, img in images:
+            got.images.append(self.registry.register_image(post_id, up.data, img=img))
         for up in sub.uploads:
-            if up.kind == "image":
-                got.images.append(self.registry.register_image(post_id, up.data))
-            elif up.kind == "audio":
-                _aid, same = self.registry.register_audio(post_id, up.data, up.ext)
-                got.audio_posts.extend(same)
-                if not transcript:
-                    transcript = transcribe(up.data, "." + up.ext)
+            if up.kind != "audio":
+                continue
+            _aid, same = self.registry.register_audio(post_id, up.data, up.ext)
+            got.audio_posts.extend(same)
+            if not transcript:
+                transcript = transcribe(up.data, "." + up.ext)
+                if transcript is None:
+                    degraded.append({"component": "whisper", "reason": "голосовое не расшифровано: Whisper недоступен"})
+        if any(not r.ocr_ok for r in got.images):
+            degraded.append({"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"})
         if sub.text:
-            text_res = self.registry.register_text(post_id, normalize_text(sub.text).folded)
+            text_res = self.registry.register_text(post_id, normalize_text(redact_cards(sub.text) or "").folded)
             if text_res:
                 got.texts.append(text_res)
         ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
         sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""), SourceText("voice", transcript or "")]
 
-        first = self.detector.detect(sources)
-        context = self._proof_context(got)
-        reqs = first.analysis.requisites
+        first = self.detector.detect(sources, allow_llm=False)
         for r in first.requisites:
             self.db.link_requisite(post_id, r.kind, r.key, r.display)
-        context += self._requisite_context(post_id, reqs, first.analysis.links)
         for link in first.links:
-            if link.domain not in ALLOWLIST_DOMAINS:
+            if _links_cases(link):
                 self.db.add_link(post_id, link.url, link.domain, link.resolved)
-        detection = self.detector.detect(sources, context) if context else first
-        analysis = detection.analysis
+        context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
+        analysis = self.detector.detect(sources, context).analysis
+        if analysis.llm_status == "failed":
+            degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
+        analysis = replace(analysis, degraded=tuple(degraded))
         self.db.update_post_analysis(post_id, score=analysis.score, level=analysis.level, track=analysis.track,
-                                     analysis=analysis.to_dict(), ocr_text=ocr_text, transcript=transcript)
+                                     analysis=analysis.to_dict(), ocr_text=redact_cards(ocr_text),
+                                     transcript=redact_cards(transcript))
         self.version += 1
         return {
             "post_id": post_id,
             "analysis": analysis.to_dict(),
             "proofs": [
-                {"artifact_id": r.artifact_id, "sha256": r.sha256, "ocr_text": r.ocr_text,
+                {"artifact_id": r.artifact_id, "sha256": r.sha256, "ocr_text": redact_cards(r.ocr_text),
                  "matches": [{"artifact_id": m.artifact_id, "post_id": m.post_id, "distance": m.distance,
                               "changes": changes_to_json(m.changes)} for m in r.matches[:50]],
                  "match_count": len(r.matches),

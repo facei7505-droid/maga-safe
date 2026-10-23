@@ -24,7 +24,8 @@ _B = _rng.integers(0, 2**31 - 1, size=MINHASH_PERM, dtype=np.uint64)
 _BAND_MIX = np.array([0x9E3779B97F4A7C15, 0xC2B2AE3D27D4EB4F, 0x165667B19E3779F9, 0x27D4EB2F165667C5], dtype=np.uint64)
 _DIGITS_RE = re.compile(r"\d")
 _SPACES_RE = re.compile(r"\s+")
-MAX_IMAGE_PIXELS = 40_000_000
+MAX_IMAGE_PIXELS = 25_000_000
+MAX_SIDE = 2400  # больше OCR и хэшам не нужно
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -35,8 +36,13 @@ def open_image(data: bytes) -> Image.Image:
     """Открыть изображение с защитой от «бомб» и с учётом EXIF-поворота."""
     Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
     img = Image.open(io.BytesIO(data))
+    if img.width * img.height > MAX_IMAGE_PIXELS:
+        raise ValueError("изображение слишком большое")
     img.load()
-    return ImageOps.exif_transpose(img).convert("RGB")
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    if max(img.size) > MAX_SIDE:
+        img.thumbnail((MAX_SIDE, MAX_SIDE))
+    return img
 
 
 def pdq_hash(img: Image.Image) -> tuple[np.ndarray, int]:

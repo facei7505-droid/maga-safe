@@ -54,7 +54,8 @@ class Analysis:
     summary: str
     requisites: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     links: tuple[dict[str, Any], ...] = field(default_factory=tuple)
-    llm_used: bool = False
+    llm_status: str = "off"  # off | not_needed | ok | failed
+    degraded: tuple[dict[str, str], ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

@@ -10,7 +10,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from pruf.normalize.ocr import OcrToken, run_ocr, tokens_to_text
+from PIL import Image
+
+from pruf.normalize.ocr import OcrToken, OcrUnavailable, run_ocr, tokens_to_text
 from pruf.registry.forensics import TokenAnomaly, token_anomalies
 from pruf.registry.hashing import minhash, open_image, pdq_from_hex, pdq_hash, pdq_hex, sha256_bytes
 from pruf.registry.imagediff import TokenChange, diff_tokens
@@ -56,6 +58,7 @@ class ImageResult:
     tokens: list[OcrToken]
     matches: list[ImageMatch]
     anomalies: list[TokenAnomaly]
+    ocr_ok: bool = True
 
 
 @dataclass
@@ -130,13 +133,20 @@ class ProofRegistry:
                 accepted.append((aid, dist))
         return sorted(accepted, key=lambda x: x[1])
 
-    def register_image(self, post_id: int, data: bytes, ocr_tokens: list[OcrToken] | None = None) -> ImageResult:
-        img = open_image(data)
+    def register_image(self, post_id: int, data: bytes, ocr_tokens: list[OcrToken] | None = None,
+                       img: Image.Image | None = None) -> ImageResult:
+        img = img if img is not None else open_image(data)
         sha = sha256_bytes(data)
         fmt = _FORMAT_EXT.get((_peek_format(data) or "").upper(), "png")
         self._blobs.put(sha, fmt, data)
         words, quality = pdq_hash(img)
-        tokens = ocr_tokens if ocr_tokens is not None else (run_ocr(img) if self._ocr_enabled else [])
+        ocr_ok = True
+        tokens = ocr_tokens or []
+        if ocr_tokens is None and self._ocr_enabled:
+            try:
+                tokens = run_ocr(img)
+            except OcrUnavailable:
+                ocr_ok = False
         anomalies = token_anomalies(img, tokens) if tokens else []
         strong = strong_tokens(tokens)
         found = self._image_candidates(words, strong)
@@ -158,7 +168,7 @@ class ProofRegistry:
             matches.append(ImageMatch(other_id, post_of.get(other_id, -1), dist, changes))
         self.images.add(artifact_id, words)
         self._remember_strong(artifact_id, strong)
-        return ImageResult(artifact_id, sha, tokens_to_text(tokens), tokens, matches, anomalies)
+        return ImageResult(artifact_id, sha, tokens_to_text(tokens), tokens, matches, anomalies, ocr_ok)
 
     def register_text(self, post_id: int, folded: str) -> TextResult | None:
         if len(folded.strip()) < MIN_TEXT_FOR_INDEX:

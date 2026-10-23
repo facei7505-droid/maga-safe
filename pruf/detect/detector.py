@@ -5,15 +5,15 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import asdict, dataclass
+from typing import Any
 
 from pruf.config import Settings
 from pruf.detect.classifier import TrackClassifier
-from pruf.detect.lexicon import TRACKS
 from pruf.detect.llm import LlmArbiter
 from pruf.detect.rules import find_features
 from pruf.models import HIGH_THRESHOLD, MEDIUM_THRESHOLD, Analysis, Evidence
-from pruf.normalize.links import Link, extract_links, resolve_shortener
-from pruf.normalize.requisites import Requisite, extract_requisites
+from pruf.normalize.links import MAX_RESOLVE_PER_POST, Link, extract_links, resolve_shortener
+from pruf.normalize.requisites import Requisite, extract_requisites, redact_cards
 from pruf.normalize.text import normalize_text
 from pruf.scoring import combine
 
@@ -71,7 +71,12 @@ class Detector:
     def has_classifier(self) -> bool:
         return self._classifier is not None
 
-    def detect(self, sources: list[SourceText], context: list[Evidence] | None = None) -> Detection:
+    def llm_state(self) -> dict[str, Any]:
+        if self._llm is None:
+            return {"configured": False}
+        return {"configured": True, **self._llm.stats()}
+
+    def detect(self, sources: list[SourceText], context: list[Evidence] | None = None, allow_llm: bool = True) -> Detection:
         evidence: list[Evidence] = []
         requisites: list[Requisite] = []
         links: list[Link] = []
@@ -80,16 +85,19 @@ class Detector:
         for src in sources:
             if not src.text or not src.text.strip():
                 continue
-            norm = normalize_text(src.text)
+            # Признаки и цитаты считаем по тексту с замаскированными картами: полный номер
+            # не должен попасть ни в базу, ни в экспорт, ни в LLM. Реквизиты берём из оригинала.
+            norm = normalize_text(redact_cards(src.text) or "")
             folded_parts.append(norm.folded)
             evidence.extend(find_features(norm, src.source))
-            for req in extract_requisites(norm.original, self._hmac_key):
+            for req in extract_requisites(src.text, self._hmac_key):
                 if req.key not in req_keys:
                     req_keys.add(req.key)
                     requisites.append(req)
             found_links = extract_links(norm.original)
             if self._settings.resolve_links:
-                found_links = [resolve_shortener(link) for link in found_links]
+                found_links = [resolve_shortener(link) if i < MAX_RESOLVE_PER_POST else link
+                               for i, link in enumerate(found_links)]
             links.extend(found_links)
         evidence.extend(_link_evidence(links))
         evidence.extend(_requisite_evidence(requisites))
@@ -98,15 +106,21 @@ class Detector:
 
         req_dicts = tuple({"kind": r.kind, "key": r.key, "display": r.display} for r in requisites)
         link_dicts = tuple({k: v for k, v in asdict(l).items() if k != "raw_span"} for l in links)
-        analysis = combine(evidence, ml, context, req_dicts, link_dicts)
+        llm_status = "off" if self._llm is None else "not_needed"
+        analysis = combine(evidence, ml, context, req_dicts, link_dicts, llm_status=llm_status)
 
-        if self._llm and MEDIUM_THRESHOLD <= analysis.score < HIGH_THRESHOLD:
-            full_text = "\n".join(s.text for s in sources if s.text)
+        if allow_llm and self._llm and MEDIUM_THRESHOLD <= analysis.score < HIGH_THRESHOLD:
+            full_text = "\n".join(redact_cards(s.text) or "" for s in sources if s.text)
             verdict = self._llm.review(full_text)
-            if verdict is not None:
+            extra: list[Evidence] = []
+            if verdict is None:
+                llm_status = "failed"
+            else:
+                llm_status = "ok"
                 extra = list(verdict.evidence)
                 if verdict.legit_context and not verdict.evidence:
-                    extra.extend(Evidence(f"llm.legit.{t}", t, "LLM: контекст похож на легальный", -15, "llm", stop=True)
-                                 for t in TRACKS)
-                analysis = combine(evidence + extra, ml, context, req_dicts, link_dicts, llm_used=True)
+                    # Только пометка для аналитика: текст поста недоверенный, поэтому
+                    # мнение LLM «это легально» само по себе балл не снижает.
+                    extra.append(Evidence("llm.legit", "common", "LLM: контекст похож на легальный", 0, "llm"))
+            analysis = combine(evidence + extra, ml, context, req_dicts, link_dicts, llm_status=llm_status)
         return Detection(analysis=analysis, requisites=tuple(requisites), links=tuple(links), folded=folded)

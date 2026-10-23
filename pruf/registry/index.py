@@ -89,12 +89,16 @@ class TextIndex:
                 self._merge()
 
     def _merge(self) -> None:
-        sigs = self._sigs[:self._size]
-        keys = band_keys_batch(sigs)
+        """Влить буфер в отсортированные массивы: сортируется только новый кусок, вставка за O(N)."""
+        start = self._merged
+        keys = band_keys_batch(self._sigs[start:self._size])
+        rows = np.arange(start, self._size, dtype=np.int64)
         for b in range(MINHASH_BANDS):
             order = np.argsort(keys[:, b], kind="stable")
-            self._sorted_keys[b] = keys[order, b]
-            self._sorted_rows[b] = order.astype(np.int64)
+            new_keys, new_rows = keys[order, b], rows[order]
+            pos = np.searchsorted(self._sorted_keys[b], new_keys, side="right")
+            self._sorted_keys[b] = np.insert(self._sorted_keys[b], pos, new_keys)
+            self._sorted_rows[b] = np.insert(self._sorted_rows[b], pos, new_rows)
         self._merged = self._size
 
     def query(self, signature: np.ndarray, min_similarity: float = TEXT_MATCH_SIMILARITY, limit: int = 500) -> list[tuple[int, float]]:

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import socket
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 _URL_RE = re.compile(
     r"(?:https?://|www\.)[^\s<>\"']+|\b(?:[a-z0-9\-]+\.)+(?:kz|ru|com|me|io|net|org|bet|xyz|site|online|top|club|app|ly|su|cc|pro|win|casino)(?:/[^\s<>\"']*)?",
@@ -16,6 +17,7 @@ SHORTENERS = frozenset({
 })
 MESSENGER_HOSTS = frozenset({"t.me", "telegram.me", "wa.me", "chat.whatsapp.com", "instagram.com", "tiktok.com"})
 _MAX_REDIRECTS = 5
+MAX_RESOLVE_PER_POST = 3
 
 
 @dataclass(frozen=True)
@@ -53,14 +55,20 @@ def extract_links(text: str) -> list[Link]:
 
 
 def _is_public_host(host: str) -> bool:
-    """Защита от SSRF: не ходим на приватные адреса и localhost."""
-    if host in {"localhost"} or host.endswith(".local") or host.endswith(".internal"):
+    """Защита от SSRF: хост резолвится, и все его адреса должны быть публичными.
+
+    Резолвинг через getaddrinfo ловит и числовые формы (2130706433, 0x7f000001, 127.1),
+    и домены, указывающие на внутренние адреса. Остаточный риск DNS rebinding между
+    проверкой и запросом принят: раскрытие ссылок по умолчанию выключено.
+    """
+    if not host or host == "localhost" or host.endswith((".local", ".internal", ".localhost")):
         return False
     try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return True
-    return ip.is_global
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError, ValueError):
+        return False
+    addresses = {info[4][0] for info in infos}
+    return bool(addresses) and all(ipaddress.ip_address(a.split("%")[0]).is_global for a in addresses)
 
 
 def resolve_shortener(link: Link, timeout: float = 3.0) -> Link:
@@ -73,14 +81,17 @@ def resolve_shortener(link: Link, timeout: float = 3.0) -> Link:
     try:
         with httpx.Client(follow_redirects=False, timeout=timeout) as client:
             for _ in range(_MAX_REDIRECTS):
-                host = urlsplit(url).hostname or ""
-                if not _is_public_host(host):
+                parts = urlsplit(url)
+                if parts.scheme not in ("http", "https") or not _is_public_host(parts.hostname or ""):
                     break
                 resp = client.head(url)
                 location = resp.headers.get("location")
                 if not resp.is_redirect or not location:
                     break
-                url = location if "://" in location else f"{urlsplit(url).scheme}://{host}{location}"
+                nxt = urljoin(url, location)
+                if urlsplit(nxt).scheme not in ("http", "https"):
+                    break
+                url = nxt
     except httpx.HTTPError:
         return link
     if url == link.url:

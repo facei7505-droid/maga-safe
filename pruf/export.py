@@ -59,12 +59,14 @@ def build_evidence_package(db: Database, blobs: BlobStore, graph: CaseGraph, cas
         p.pop("label", None)  # служебная метка синтетики в пакет не попадает
     files: dict[str, bytes] = {}
     artifacts_meta = []
+    missing: list[dict[str, Any]] = []
     for p in posts:
         for art in db.artifacts_for_post(p["id"]):
             if art["kind"] not in ("image", "audio") or not art["ext"]:
                 continue
             data = blobs.get(art["sha256"], art["ext"])
             if data is None:
+                missing.append({"post_id": p["id"], "artifact_id": art["id"], "sha256": art["sha256"]})
                 continue
             name = f"artifacts/post{p['id']}_a{art['id']}.{art['ext']}"
             files[name] = data
@@ -75,7 +77,7 @@ def build_evidence_package(db: Database, blobs: BlobStore, graph: CaseGraph, cas
     files["report.html"] = _report_html(case, posts, generated).encode()
     manifest = {
         "case": case.to_dict(), "generated_at_utc": generated, "generator": f"pruf {__version__}", "exported_by": actor,
-        "disclaimer": DISCLAIMER, "artifacts": artifacts_meta,
+        "disclaimer": DISCLAIMER, "artifacts": artifacts_meta, "missing_artifacts": missing,
         "files": {name: _sha(data) for name, data in sorted(files.items())},
     }
     manifest_bytes = json.dumps(manifest, ensure_ascii=False, indent=1).encode()

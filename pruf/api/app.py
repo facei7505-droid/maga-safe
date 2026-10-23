@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -14,11 +15,15 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
 from pruf.api.security import RateLimiter, require_analyst, require_bank, sniff_upload
 from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
+from pruf.normalize.audio import whisper_available
+from pruf.normalize.ocr import ocr_available
+from pruf.normalize.requisites import extract_requisites
 from pruf.graph.builder import CaseGraph, artifact_timeline
 from pruf.pipeline import Pruf, Submission, Upload
 from pruf.registry.forensics import ela_heatmap_png
@@ -42,6 +47,16 @@ class TextIn(BaseModel):
     store: bool = True
 
 
+class RequisiteCheck(BaseModel):
+    value: str = Field(min_length=5, max_length=64)
+
+
+def capabilities(p: Pruf) -> dict[str, Any]:
+    """Что реально работает: аналитик видит, если OCR, Whisper, ML или LLM недоступны."""
+    return {"ocr": ocr_available(), "whisper": whisper_available(), "ml": p.detector.has_classifier,
+            "llm": p.detector.llm_state(), "link_resolution": p.settings.resolve_links}
+
+
 class CaseUpdate(BaseModel):
     status: str
     note: str | None = Field(default=None, max_length=2000)
@@ -54,6 +69,9 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        if int(os.environ.get("WEB_CONCURRENCY", "1")) > 1:
+            # Индексы ПРУФ и граф живут в памяти процесса: несколько воркеров не увидят приём друг друга.
+            raise RuntimeError("ПРУФ MVP работает в одном процессе: уберите --workers / WEB_CONCURRENCY")
         state["pruf"] = pruf or Pruf(settings)
         state["graph"] = CaseGraph(state["pruf"].db)
         if settings.dev_mode:
@@ -62,6 +80,24 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         state["pruf"].db.close()
 
     app = FastAPI(title="ПРУФ API", version="0.1.0", lifespan=lifespan)
+    max_body = MAX_FILES * settings.max_upload_bytes + 256 * 1024
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        length = request.headers.get("content-length")
+        if length is not None and (not length.isdigit() or int(length) > max_body):
+            return JSONResponse({"success": False, "data": None, "error": "Запрос слишком большой", "meta": None}, status_code=413)
+        if request.method in ("POST", "PUT", "PATCH") and length is None and \
+                request.headers.get("transfer-encoding", "").lower() == "chunked":
+            return JSONResponse({"success": False, "data": None, "error": "Нужен Content-Length", "meta": None}, status_code=411)
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'")
+        return response
 
     def analyst(request: Request) -> str:
         return require_analyst(request, settings, limiter)
@@ -101,7 +137,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         return ok(p.ingest(Submission(text=body.text, channel=body.channel, posted_at=body.posted_at, source="api")))
 
     @app.post("/api/v1/analyze")
-    async def analyze(
+    def analyze(
         text: str | None = Form(default=None, max_length=MAX_TEXT),
         channel: str | None = Form(default=None, max_length=200),
         posted_at: str | None = Form(default=None, max_length=40),
@@ -113,7 +149,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             raise HTTPException(status_code=413, detail=f"Не больше {MAX_FILES} файлов")
         uploads = []
         for f in files:
-            data = await f.read(settings.max_upload_bytes + 1)
+            data = f.file.read(settings.max_upload_bytes + 1)
             if len(data) > settings.max_upload_bytes:
                 raise HTTPException(status_code=413, detail="Файл слишком большой")
             kind, ext = sniff_upload(data, f.filename, f.content_type)
@@ -123,7 +159,9 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         try:
             result = core().ingest(Submission(text=text, uploads=tuple(uploads), transcript=transcript,
                                               channel=channel, posted_at=posted_at, source="dashboard"))
-        except (OSError, ValueError) as exc:
+        except Image.DecompressionBombError as exc:
+            raise HTTPException(status_code=413, detail="Изображение слишком большое") from exc
+        except (UnidentifiedImageError, ValueError) as exc:
             log.warning("не удалось обработать файл: %s", exc)
             raise HTTPException(status_code=422, detail="Не удалось прочитать файл") from exc
         return ok(result)
@@ -251,12 +289,12 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         g = graph()
         return ok({"posts": p.db.count_posts(), "levels": p.db.level_counts(), "cases": len(g.cases()),
                    "images_indexed": len(p.registry.images), "texts_indexed": len(p.registry.texts),
-                   "ml": p.detector.has_classifier, "llm": bool(settings.anthropic_api_key)})
+                   "capabilities": capabilities(p)})
 
     # ---------- банки ----------
     @app.get("/api/v1/bank/requisites")
     def bank_feed(since: str | None = Query(default=None, max_length=40),
-                  min_level: str = Query(default="medium", pattern="^(low|medium|high)$"),
+                  min_level: str = Query(default="medium", pattern="^(medium|high)$"),
                   limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0),
                   actor: str = Depends(bank)):
         rows = core().db.requisite_feed(since, min_level, limit, offset)
@@ -265,12 +303,27 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         for r in rows:
             post_ids = core().db.posts_with_requisite(r["key"])
             cases = sorted({c for c in (g.case_for_post(pid) for pid in post_ids) if c})
-            feed.append({"type": r["kind"], "value": r["display"], "match_key": r["key"], "max_score": r["max_score"], "posts": r["posts"],
+            feed.append({"id": r["id"], "type": r["kind"], "value": r["display"], "max_score": r["max_score"], "posts": r["posts"],
                          "tracks": sorted(set((r["tracks"] or "").split(",")) - {""}), "cases": cases,
                          "first_seen": r["first_seen"], "last_seen": r["last_seen"],
                          "note": "Найдены признаки использования реквизита в схемах; не является основанием для блокировки без проверки"})
         core().db.audit(actor, "bank_feed", f"{len(feed)} rows")
         return ok(feed, limit=limit, offset=offset)
+
+    @app.post("/api/v1/bank/check")
+    def bank_check(body: RequisiteCheck, actor: str = Depends(bank)):
+        """Банк проверяет свой реквизит (номер карты, телефон, IBAN) по реестру. Значение не сохраняется."""
+        reqs = extract_requisites(body.value, core().settings.effective_hmac_key())
+        if not reqs:
+            raise HTTPException(status_code=400, detail="Не распознан реквизит: карта, телефон +7, IBAN KZ или ссылка Kaspi")
+        found = core().db.lookup_requisite(reqs[0].key)
+        core().db.audit(actor, "bank_check", reqs[0].kind)
+        if not found:
+            return ok({"found": False, "type": reqs[0].kind})
+        return ok({"found": True, "type": found["kind"], "value": found["display"], "posts": found["posts"],
+                   "max_score": found["max_score"], "tracks": sorted(set((found["tracks"] or "").split(",")) - {""}),
+                   "first_seen": found["first_seen"],
+                   "note": "Найдены признаки использования реквизита в схемах; требуется проверка банком"})
 
     @app.get("/api/v1/health")
     def health():

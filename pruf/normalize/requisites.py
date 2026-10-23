@@ -49,6 +49,18 @@ def card_key(digits: str, hmac_key: bytes) -> str:
     return "card:" + hmac.new(hmac_key, digits.encode(), hashlib.sha256).hexdigest()[:32]
 
 
+def redact_cards(text: str | None) -> str | None:
+    """Заменить номера карт (с верной контрольной суммой) маской 6+4 до записи в базу, экспорт или LLM."""
+    if not text:
+        return text
+
+    def mask(m: re.Match[str]) -> str:
+        digits = re.sub(r"\D", "", m.group())
+        return f"{digits[:6]}******{digits[-4:]}" if _luhn_ok(digits) else m.group()
+
+    return _CARD_RE.sub(mask, text)
+
+
 def extract_requisites(text: str, hmac_key: bytes) -> list[Requisite]:
     found: list[Requisite] = []
     seen: set[str] = set()

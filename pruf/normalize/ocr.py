@@ -41,14 +41,28 @@ def _get_engine():
         return _engine
 
 
+class OcrUnavailable(RuntimeError):
+    """OCR не установлен или упал: вызывающий код помечает анализ как неполный."""
+
+
+def ocr_available() -> bool:
+    try:
+        _get_engine()
+    except (ImportError, OSError, RuntimeError):
+        return False
+    return True
+
+
 def run_ocr(img: Image.Image) -> list[OcrToken]:
     try:
         engine = _get_engine()
-    except ImportError:
-        log.warning("rapidocr_onnxruntime не установлен, OCR отключён")
-        return []
-    width, height = img.size
-    result, _ = engine(np.asarray(img))
+        width, height = img.size
+        result, _ = engine(np.asarray(img))
+    except ImportError as exc:
+        raise OcrUnavailable("rapidocr_onnxruntime не установлен") from exc
+    except (OSError, RuntimeError, ValueError) as exc:
+        log.warning("OCR упал: %s", exc)
+        raise OcrUnavailable(str(exc)) from exc
     tokens: list[OcrToken] = []
     for box, text, conf in result or []:
         conf = float(conf)

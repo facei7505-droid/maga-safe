@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,8 +42,20 @@ class Settings:
         if self.hmac_key:
             return self.hmac_key.encode()
         if self.dev_mode:
-            return b"pruf-dev-only-key"
+            return _dev_key(self.data_dir)
         raise RuntimeError("PRUF_HMAC_KEY не задан (или включите PRUF_DEV_MODE=1 для локальной разработки)")
+
+
+def _dev_key(data_dir: Path) -> bytes:
+    """Случайный ключ для разработки, один на каталог данных (не константа в коде)."""
+    path = data_dir / ".dev_hmac_key"
+    if path.exists():
+        return path.read_bytes()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    key = secrets.token_bytes(32)
+    path.write_bytes(key)
+    path.chmod(0o600)
+    return key
 
 
 def load_settings() -> Settings:

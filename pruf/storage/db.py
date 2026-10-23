@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS posts (
     track TEXT,
     analysis_json TEXT,
     label TEXT,
+    status TEXT DEFAULT 'processing',
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_posts_level ON posts(level, score);
@@ -114,6 +115,10 @@ class Database:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(posts)")}
+            if "status" not in cols:  # миграция баз, созданных до появления статуса
+                self._conn.execute("ALTER TABLE posts ADD COLUMN status TEXT DEFAULT 'ok'")
+                self._conn.commit()
 
     def close(self) -> None:
         with self._lock:
@@ -145,9 +150,13 @@ class Database:
     def update_post_analysis(self, post_id: int, *, score: float, level: str, track: str | None,
                              analysis: dict[str, Any], ocr_text: str | None, transcript: str | None) -> None:
         self._exec(
-            "UPDATE posts SET score=?, level=?, track=?, analysis_json=?, ocr_text=?, transcript=? WHERE id=?",
+            "UPDATE posts SET score=?, level=?, track=?, analysis_json=?, ocr_text=?, transcript=?, status='ok' WHERE id=?",
             (score, level, track, json.dumps(analysis, ensure_ascii=False), ocr_text, transcript, post_id),
         )
+
+    def mark_post_failed(self, post_id: int, reason: str) -> None:
+        self._exec("UPDATE posts SET status='failed', analysis_json=? WHERE id=?",
+                   (json.dumps({"error": reason}, ensure_ascii=False), post_id))
 
     def get_post(self, post_id: int) -> dict[str, Any] | None:
         post = self._one("SELECT * FROM posts WHERE id=?", (post_id,))
@@ -167,7 +176,7 @@ class Database:
         return {r["id"]: (r["level"], r["track"], r["score"]) for r in self.get_posts(ids)}
 
     def all_posts_brief(self) -> list[dict[str, Any]]:
-        return self._all("SELECT id, channel, posted_at, score, level, track FROM posts")
+        return self._all("SELECT id, channel, posted_at, score, level, track FROM posts WHERE status='ok'")
 
     def count_posts(self) -> int:
         row = self._one("SELECT COUNT(*) AS n FROM posts")
@@ -241,9 +250,16 @@ class Database:
             self._conn.commit()
         return int(req_id)
 
-    def posts_with_requisite(self, key: str) -> list[int]:
+    def posts_with_requisite(self, key: str, limit: int = 1000) -> list[int]:
         return [r["post_id"] for r in self._all(
-            "SELECT pr.post_id FROM post_requisites pr JOIN requisites r ON r.id=pr.requisite_id WHERE r.key=?", (key,))]
+            "SELECT pr.post_id FROM post_requisites pr JOIN requisites r ON r.id=pr.requisite_id WHERE r.key=? "
+            "ORDER BY pr.post_id DESC LIMIT ?", (key, limit))]
+
+    def lookup_requisite(self, key: str) -> dict[str, Any] | None:
+        return self._one(
+            "SELECT r.kind, r.display, r.first_seen, COUNT(DISTINCT p.id) AS posts, MAX(p.score) AS max_score, "
+            "GROUP_CONCAT(DISTINCT p.track) AS tracks FROM requisites r JOIN post_requisites pr ON pr.requisite_id=r.id "
+            "JOIN posts p ON p.id=pr.post_id WHERE r.key=? AND p.level IN ('medium','high') GROUP BY r.id", (key,))
 
     def requisites_for_post(self, post_id: int) -> list[dict[str, Any]]:
         return self._all("SELECT r.id, r.kind, r.key, r.display FROM requisites r JOIN post_requisites pr ON pr.requisite_id=r.id WHERE pr.post_id=?", (post_id,))
