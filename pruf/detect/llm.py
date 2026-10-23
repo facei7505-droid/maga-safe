@@ -102,6 +102,10 @@ class LlmArbiter:
             log.warning("LLM: нет соединения: %s", exc)
             self._last_error = "connection"
             return None
+        except Exception:  # noqa: BLE001 — сбой арбитра не должен ронять приём поста
+            log.exception("LLM: непредвиденная ошибка")
+            self._last_error = "unexpected"
+            return None
         if response.stop_reason == "refusal":
             log.info("LLM отказался обрабатывать сообщение")
             self._last_error = "refusal"

@@ -6,6 +6,7 @@ import logging
 import re
 from dataclasses import asdict, dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from pruf.config import Settings
 from pruf.detect.classifier import TrackClassifier
@@ -13,6 +14,7 @@ from pruf.detect.llm import LlmArbiter
 from pruf.detect.rules import find_features
 from pruf.models import HIGH_THRESHOLD, MEDIUM_THRESHOLD, Analysis, Evidence
 from pruf.normalize.links import (
+    ALLOWLIST_DOMAINS,
     MAX_RESOLVE_PER_POST,
     Link,
     extract_links,
@@ -23,7 +25,13 @@ from pruf.normalize.text import normalize_text
 from pruf.scoring import combine
 
 log = logging.getLogger(__name__)
-_CASINO_DOMAIN_RE = re.compile(r"(casino|kazino|slot|1xbet|1win|pin-?up|mostbet|melbet|vulkan|azino|bet\b|\.bet$)", re.IGNORECASE)
+# Только по имени хоста, не по пути: «gov.kz/news/kazino-zapret» не казино. «bet» только целой меткой
+# (bet.kz, jet-casino.bet, bet-777.top), иначе ловятся alphabet.com и tibet.kz.
+_CASINO_DOMAIN_RE = re.compile(r"casino|kazino|slot|1xbet|1win|pin-?up|mostbet|melbet|vulkan|azino|(?:^|[.\-])bet(?=$|[.\-\d])", re.IGNORECASE)
+
+
+def _host(url: str) -> str:
+    return (urlsplit(url if "://" in url else "http://" + url).hostname or "").lower()
 
 
 @dataclass(frozen=True)
@@ -47,7 +55,8 @@ def _link_evidence(links: list[Link]) -> list[Evidence]:
         if link.is_shortener:
             out.append(Evidence("common.shortener", "common", "Сокращённая ссылка скрывает конечный адрес", 6, "link", link.url))
         target = link.resolved or link.url
-        if _CASINO_DOMAIN_RE.search(domain) or _CASINO_DOMAIN_RE.search(target):
+        hosts = {domain.lower(), _host(target)} - ALLOWLIST_DOMAINS - {""}
+        if any(_CASINO_DOMAIN_RE.search(h) for h in hosts):
             out.append(Evidence("casino.domain", "casino", "Ссылка на домен казино/букмекера", 20, "link", target, core=True))
     return out
 

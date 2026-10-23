@@ -223,7 +223,7 @@ class ProofRegistry:
         sha = sha256_bytes(data)
         self._blobs.put(sha, ext, data)
         artifact_id = self._db.create_artifact(post_id=post_id, kind="audio", sha256=sha, ext=ext)
-        same = [r for r in self._db.artifacts_by_sha(sha) if r["id"] != artifact_id]
+        same = [r for r in self._db.artifacts_by_sha(sha) if r["id"] != artifact_id and r["post_id"] != post_id]
         for r in same:
             self._db.add_match(artifact_id, r["id"], "audio", 0)
         return artifact_id, [r["post_id"] for r in same]

@@ -12,7 +12,7 @@ from pruf.config import Settings
 from pruf.detect.detector import Detector, SourceText
 from pruf.models import Evidence
 from pruf.normalize.audio import transcribe
-from pruf.normalize.links import Link
+from pruf.normalize.links import ALLOWLIST_DOMAINS, Link
 from pruf.normalize.requisites import redact_cards
 from pruf.normalize.text import normalize_text
 from pruf.registry.hashing import open_image
@@ -28,10 +28,6 @@ from pruf.storage.db import Database
 log = logging.getLogger(__name__)
 RISKY_LEVELS = ("medium", "high")
 # Бренды и площадки: их домены и логотипы повторяются легально и не связывают кейсы.
-ALLOWLIST_DOMAINS = frozenset({
-    "kaspi.kz", "halykbank.kz", "egov.kz", "gov.kz", "nationalbank.kz", "instagram.com", "t.me", "telegram.me",
-    "wa.me", "chat.whatsapp.com", "tiktok.com", "youtube.com", "youtu.be", "vk.com", "google.com", "2gis.kz",
-})
 REUSED_PROOF_WEIGHT = 20
 REUSED_PROOF_STEP = 5  # за каждый следующий рискованный пост с тем же пруфом, до +20
 EDITED_DIGITS_WEIGHT = 20
@@ -227,8 +223,13 @@ class Pruf:
         ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or ""
         sources = [SourceText("text", text or ""), SourceText("ocr", ocr_text), SourceText("voice", transcript or "")]
         first = self.detector.detect(sources, allow_llm=False)
-        context = self._proof_context(got) + self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
-        analysis = self.detector.detect(sources, context).analysis
+        context = self._proof_context(got)
+        # Анонимный бот не отвечает «есть ли этот номер в базе» на голый реквизит: иначе мошенник
+        # проверяет, засвечена ли его карта. Контекст реестра по реквизитам только если сам текст
+        # уже даёт средний риск. LLM для анонимов выключен: иначе любой может тратить бюджет API.
+        if not public or first.analysis.level in RISKY_LEVELS:
+            context += self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
+        analysis = self.detector.detect(sources, context, allow_llm=not public).analysis
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))

@@ -119,6 +119,8 @@ class BotLogic:
             else:
                 data, ext = self._fetch(voice["file_id"], "audio")
                 transcript = transcribe(data, "." + ext)
+                if transcript is None:
+                    note = "Не удалось расшифровать голосовое, проверил только текст и изображения."
         return images, transcript, note
 
     def _fetch(self, file_id: str, kind: str) -> tuple[bytes, str]:

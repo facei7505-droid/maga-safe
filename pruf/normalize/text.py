@@ -29,8 +29,13 @@ _TRANSLIT_SINGLE = {
     "j": "ж", "k": "к", "l": "л", "m": "м", "n": "н", "o": "о", "p": "п", "q": "қ", "r": "р",
     "s": "с", "t": "т", "u": "у", "v": "в", "w": "у", "x": "кс", "z": "з",
     "á": "ә", "ä": "ә", "ǵ": "ғ", "ğ": "ғ", "ń": "ң", "ñ": "ң", "ó": "ө", "ö": "ө", "ú": "ұ",
-    "ü": "ү", "ý": "ү", "ı": "ы", "ş": "ш", "ç": "ч", "'": "ь",
+    "ü": "ү", "ý": "ү", "ı": "ы", "ş": "ш", "ç": "ч", "'": "ь", "ū": "ұ",
 }
+# Казахский часто набирают на русской раскладке (ұ→у, қ→к, і→и): сворачиваем казахские буквы
+# к русской основе, тогда «Утыс» и «Ұтыс» дают одно и то же. Шаблоны словаря сворачиваются так же.
+KK_TO_RU = str.maketrans({"ұ": "у", "ү": "у", "қ": "к", "ң": "н", "ғ": "г", "ә": "а", "ө": "о", "һ": "х", "і": "и"})
+# Категории, которые выбрасываются из свёрнутого текста: невидимые символы и одиночные диакритики
+_DROP_CATEGORIES = ("Cf", "Mn")
 _VOWELS_LAT = set("aeiouy")
 
 _TOKEN_RE = re.compile(r"\S+")
@@ -151,16 +156,20 @@ def _fold_token(token: str, base: int) -> list[tuple[str, int, int]]:
 def normalize_text(raw: str) -> NormText:
     """Свернуть текст для поиска признаков, сохранив связь с оригиналом."""
     original = unicodedata.normalize("NFKC", raw or "")
+    # «İ» (казахская латиница) в нижнем регистре даёт два символа; та же длина, позиции не сдвигаются
+    work = original.replace("İ", "I")
     chars: list[tuple[str, int, int]] = []
     last_end = 0
-    for match in _TOKEN_RE.finditer(original):
+    for match in _TOKEN_RE.finditer(work):
         if match.start() > last_end:
             chars.append((" ", last_end, match.start()))
         chars.extend(_fold_token(match.group(), match.start()))
         last_end = match.end()
     # Невидимые символы (U+200B, U+00AD, U+200D, U+FEFF) рвут слова и прячут признаки: выбрасываем,
     # карта позиций остаётся верной, т.к. каждый символ хранит свой диапазон в оригинале.
-    folded_chars = [("е" if c == "ё" else c, s, e) for c, s, e in chars if unicodedata.category(c) != "Cf"]
+    # lower() может вернуть несколько символов: раскладываем по одному с тем же диапазоном.
+    folded_chars = [("е" if c == "ё" else c.translate(KK_TO_RU), s, e)
+                    for chunk, s, e in chars for c in chunk if unicodedata.category(c) not in _DROP_CATEGORIES]
     folded = "".join(c for c, _, _ in folded_chars)
     spans = tuple((s, e) for _, s, e in folded_chars)
     return NormText(original=original, folded=folded, spans=spans)

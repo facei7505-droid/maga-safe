@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from pruf.normalize.text import KK_TO_RU
+
 TRACKS = ("lottery", "casino", "pyramid")
 TRACK_LABELS = {
     "lottery": "Платный розыгрыш / лотерея",
@@ -29,8 +31,8 @@ class Feature:
     core: bool = False  # «ядровой» признак, нужен для высокого риска трека
 
     def compiled(self) -> tuple[re.Pattern[str], ...]:
-        # Латинская i сворачивается в казахскую «і», поэтому «и» и «і» в шаблонах взаимозаменяемы.
-        return tuple(re.compile(re.sub("[иі]", "[иі]", p), re.IGNORECASE) for p in self.patterns)
+        # Свёрнутый текст сводит казахские буквы к русской основе (KK_TO_RU); шаблоны сводятся так же.
+        return tuple(re.compile(p.translate(KK_TO_RU), re.IGNORECASE) for p in self.patterns)
 
 
 def w(*stems: str) -> str:

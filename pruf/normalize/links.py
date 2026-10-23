@@ -8,8 +8,15 @@ import socket
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
+# Домены, которые сами по себе не признак (банки, госсайты, соцсети)
+ALLOWLIST_DOMAINS = frozenset({
+    "kaspi.kz", "halykbank.kz", "egov.kz", "gov.kz", "nationalbank.kz", "instagram.com", "t.me", "telegram.me",
+    "wa.me", "chat.whatsapp.com", "tiktok.com", "youtube.com", "youtu.be", "vk.com", "google.com", "2gis.kz",
+})
+
+# Голый домен: метки ограничены по длине и числу, иначе «a.a.a.…» даёт квадратичный перебор (ReDoS)
 _URL_RE = re.compile(
-    r"(?:https?://|www\.)[^\s<>\"']+|\b(?:[a-z0-9\-]+\.)+(?:kz|ru|com|me|io|net|org|bet|xyz|site|online|top|club|app|ly|su|cc|pro|win|casino)(?:/[^\s<>\"']*)?",
+    r"(?:https?://|www\.)[^\s<>\"']+|(?<![a-z0-9.\-])(?:[a-z0-9\-]{1,63}\.){1,6}(?:kz|ru|com|me|io|net|org|bet|xyz|site|online|top|club|app|ly|su|cc|pro|win|casino)(?:/[^\s<>\"']*)?",
     re.IGNORECASE,
 )
 SHORTENERS = frozenset({

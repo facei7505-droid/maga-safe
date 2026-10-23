@@ -133,24 +133,31 @@ def test_transcribe_without_whisper_returns_none(monkeypatch: pytest.MonkeyPatch
     assert audio_mod.transcribe(b"OggS") is None
 
 
-def _fake_whisper(monkeypatch: pytest.MonkeyPatch, model_factory) -> None:
+def _fake_whisper(monkeypatch: pytest.MonkeyPatch, model_factory, decoded: list | None = None) -> None:
     module = types.ModuleType("faster_whisper")
     module.WhisperModel = model_factory
+    # decode_audio читает файл; в тесте «сэмплы» это байты файла, повторённые до нужной длины
+    module.decode_audio = lambda path, sampling_rate: decoded if decoded is not None else list(Path(path).read_bytes())
     monkeypatch.setitem(sys.modules, "faster_whisper", module)
     monkeypatch.setattr(audio_mod, "_model", None)
+    monkeypatch.setattr(audio_mod, "_load_failed_at", None)
+
+
+def _segments(*texts: str):
+    return [types.SimpleNamespace(text=t) for t in texts], None
 
 
 def test_transcribe_with_whisper_joins_segments(monkeypatch: pytest.MonkeyPatch) -> None:
     # Arrange
-    seen: list[bytes] = []
+    seen: list = []
 
     class FakeModel:
         def __init__(self, *args, **kwargs):
             pass
 
-        def transcribe(self, path: str, vad_filter: bool):
-            seen.append(Path(path).read_bytes())
-            return [types.SimpleNamespace(text=" Пассивный доход "), types.SimpleNamespace(text="5% в день ")], None
+        def transcribe(self, samples, vad_filter: bool):
+            seen.append(bytes(samples))
+            return _segments(" Пассивный доход ", "5% в день ")
 
     _fake_whisper(monkeypatch, FakeModel)
 
@@ -162,15 +169,59 @@ def test_transcribe_with_whisper_joins_segments(monkeypatch: pytest.MonkeyPatch)
     assert seen == [b"OggS-voice"]
 
 
-def test_transcribe_when_model_cannot_load_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_transcribe_cuts_audio_to_max_length_whatever_sender_claims(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: декодировано 10 минут звука, хотя отправитель мог указать duration=1
+    lengths: list[int] = []
+
+    class FakeModel:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def transcribe(self, samples, vad_filter: bool):
+            lengths.append(len(samples))
+            return _segments("текст")
+
+    _fake_whisper(monkeypatch, FakeModel, decoded=[0] * (600 * audio_mod.SAMPLE_RATE))
+
+    # Act
+    audio_mod.transcribe(b"OggS", ".ogg")
+
+    # Assert
+    assert lengths == [audio_mod.MAX_AUDIO_SECONDS * audio_mod.SAMPLE_RATE]
+
+
+def test_transcribe_corrupt_audio_returns_none_instead_of_raising(monkeypatch: pytest.MonkeyPatch) -> None:
     # Arrange
+    class FakeModel:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def transcribe(self, samples, vad_filter: bool):
+            raise RuntimeError("Invalid data found when processing input")
+
+    _fake_whisper(monkeypatch, FakeModel)
+
+    # Act / Assert
+    assert audio_mod.transcribe(b"not-audio") is None
+
+
+def test_transcribe_when_model_cannot_load_returns_none_and_does_not_retry_each_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange
+    attempts: list[int] = []
+
     def broken(*_a, **_kw):
+        attempts.append(1)
         raise OSError("модель не скачана")
 
     _fake_whisper(monkeypatch, broken)
 
-    # Act / Assert
-    assert audio_mod.transcribe(b"OggS") is None
+    # Act
+    first = audio_mod.transcribe(b"OggS")
+    second = audio_mod.transcribe(b"OggS")
+
+    # Assert
+    assert first is None and second is None
+    assert len(attempts) == 1
 
 
 # ---------- OCR ----------
