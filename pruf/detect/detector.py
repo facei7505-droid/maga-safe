@@ -30,6 +30,22 @@ log = logging.getLogger(__name__)
 _CASINO_DOMAIN_RE = re.compile(r"casino|kazino|slot|1xbet|1win|pin-?up|mostbet|melbet|vulkan|azino|(?:^|[.\-])bet(?=$|[.\-\d])", re.IGNORECASE)
 
 
+# Бренды, которыми прикрываются фальшивые розыгрыши, и их настоящие домены
+_BRAND_DOMAINS = {
+    "kaspi": ("kaspi.kz",), "halyk": ("halykbank.kz", "homebank.kz"), "magnum": ("magnum.kz",), "egov": ("egov.kz",),
+    "kazpost": ("post.kz", "kazpost.kz"), "jusan": ("jusan.kz",), "freedom": ("ffin.kz", "freedombank.kz"),
+    "kcell": ("kcell.kz",), "beeline": ("beeline.kz",), "tele2": ("tele2.kz",), "sattilik": ("sattilik.kz",),
+    "airastana": ("airastana.com",),
+}
+
+
+def _brand_lookalike(host: str) -> str | None:
+    for brand, official in _BRAND_DOMAINS.items():
+        if brand in host and not any(host == d or host.endswith("." + d) for d in official):
+            return brand
+    return None
+
+
 def _host(url: str) -> str:
     return (urlsplit(url if "://" in url else "http://" + url).hostname or "").lower()
 
@@ -58,6 +74,9 @@ def _link_evidence(links: list[Link]) -> list[Evidence]:
         hosts = {domain.lower(), _host(target)} - ALLOWLIST_DOMAINS - {""}
         if any(_CASINO_DOMAIN_RE.search(h) for h in hosts):
             out.append(Evidence("casino.domain", "casino", "Ссылка на домен казино/букмекера", 20, "link", target, core=True))
+        brand = next((b for h in hosts if (b := _brand_lookalike(h))), None)
+        if brand:
+            out.append(Evidence("common.brand_lookalike", "common", f"Домен похож на {brand}, но не официальный", 14, "link", target))
     return out
 
 

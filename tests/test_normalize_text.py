@@ -97,11 +97,11 @@ def test_combining_marks_used_as_obfuscation_are_dropped() -> None:
 
 def test_kazakh_latin_2021_letters_map_to_kazakh_cyrillic() -> None:
     # Act
-    folded = normalize_text("Qatysu 1000 teńge, ǵ ú ü ó á ı ū").folded
+    folded = normalize_text("Qatysu 1000 teńge, ǵ, ú, ü, ó, á, ı, ū").folded
 
     # Assert
     # казахские буквы затем сводятся к русской основе (см. KK_TO_RU)
-    assert folded == "катысу 1000 тенге, г у у о а ы у"
+    assert folded == "катысу 1000 тенге, г, у, у, о, а, ы, у"
 
 
 def test_yo_is_folded_to_ye() -> None:
@@ -195,3 +195,17 @@ def test_invisible_characters_do_not_break_words(invisible: str) -> None:
 
     # Assert
     assert "розыгрыш" in folded
+
+
+def test_spaced_out_letters_are_joined_and_quoted_from_original() -> None:
+    # Arrange
+    text = normalize_text("к а з и н о без вериф, П.И.Р.А.М.И.Д.А")
+
+    # Act / Assert
+    assert text.folded == "казино без вериф, пирамида"
+    assert text.quote(0, 6) == "к а з и н о"
+
+
+def test_short_letter_runs_and_abbreviations_are_not_joined() -> None:
+    assert normalize_text("т.е. и т.д., я и ты").folded == "т.е. и т.д., я и ты"
+    assert normalize_text("с 5к а и б").folded == "с 5к а и б"

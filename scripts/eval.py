@@ -29,6 +29,16 @@ from pruf.detect.lexicon import TRACKS
 from pruf.synth.generator import SynthPost, read_jsonl
 
 LEVELS_POS = {"medium": ("medium", "high"), "high": ("high",)}
+# Каждый слепой набор пишет отдельный агент без доступа к коду; на нём только измеряем. После отчёта набор
+# считается «потраченным»: он переходит в dev, его ошибки можно разбирать, а следующий раунд проверяется
+# на новом наборе. v1 и v2 уже в dev; v3 опубликован в раунде 3, следующий раунд требует v4.
+BLIND_HISTORY = (
+    ("handwritten_blind (v1)", "раунд 1, первый замер", "0,913", "0,875", "0,125"),
+    ("handwritten_blind_v2", "раунд 2, до правок", "0,793", "0,639", "0,250"),
+    ("handwritten_blind_v2", "раунд 2, после правок по своему dev-набору", "0,765", "0,722", "0,333"),
+    ("handwritten_blind_v3", "код раунда 1 на этом наборе, для сравнения", "0,692", "0,450", "0,200"),
+    ("handwritten_blind_v3", "раунд 3, первый замер", "0,857", "0,750", "0,125"),
+)
 
 
 def metrics(rows: list[tuple[SynthPost, str, str | None]], min_level: str) -> dict:
@@ -133,7 +143,10 @@ def to_markdown(report: dict) -> str:
     lines = ["# ПРУФ: метрики на синтетическом тесте", "",
              f"Датасет: {report['dataset']['posts']} постов, тест: {report['dataset']['test']} "
              f"({report['dataset']['test_labels']}). Разбиение по кампаниям, 1/4 шаблонов только в тесте.", "",
-             "Положительный прогноз: уровень «средний» или выше (строки ≥medium) либо только «высокий» (≥high).", ""]
+             "Положительный прогноз: уровень «средний» или выше (строки ≥medium) либо только «высокий» (≥high).", "",
+             "Наборы `dev:*` используются для настройки правил, поэтому цифры на них завышены. Наборы `blind:*` пишет "
+             "отдельный агент без доступа к коду, на них только измеряем; после публикации набор уходит в dev. "
+             "Главная цифра качества — слепой набор и таблица истории в конце.", ""]
     for mode, variants in report["results"].items():
         blocks = variants.items() if mode != "full" else [("full", variants)]
         for name, res in blocks:
@@ -147,7 +160,7 @@ def to_markdown(report: dict) -> str:
                     lines.append(f"| ≥{lvl} | {t} | {m['precision']} | {m['recall']} | {m['f1']} | |")
                 for lang, m in r["by_lang"].items():
                     lines.append(f"| ≥{lvl} | язык {lang} | {m['precision']} | {m['recall']} | {m['f1']} | {m.get('fpr', '')} |")
-            if mode == "handwritten_blind":
+            if mode.startswith("blind:"):
                 med = res["medium"]
                 lines += ["", "Ошибки на слепом наборе (≥medium), показаны как есть:"]
                 lines += [f"- ложное срабатывание: {t}" for t in med["false_positives"]]
@@ -157,6 +170,13 @@ def to_markdown(report: dict) -> str:
                 lines.append(f"\nПосты с изображениями (≥medium): precision {ip['precision']}, recall {ip['recall']}, FPR {ip.get('fpr')}.")
                 lines.append(f"Скорость полного пайплайна (с OCR): {res['throughput_posts_per_sec']} постов/с на 1 CPU.")
             lines.append("")
+    lines += ["## История слепых замеров (≥medium)", "", "| Набор | Когда | Precision | Recall | FPR |", "|---|---|---|---|---|"]
+    lines += [f"| {name} | {when} | {p} | {r} | {f} |" for name, when, p, r, f in BLIND_HISTORY]
+    for mode, variants in report["results"].items():
+        if mode.startswith("blind:"):
+            o = variants["rules+ml"]["medium"]["overall"]
+            lines.append(f"| {mode[6:]} | сейчас | {o['precision']} | {o['recall']} | {o['fpr']} |")
+    lines.append("")
     lines += ["Синтетика сгенерирована нашим генератором, поэтому цифры оптимистичны; главное в них — FPR на "
               "трудных легальных примерах (бесплатные конкурсы, депозиты, предупреждения, личные переводы, сборы)."]
     return "\n".join(lines) + "\n"
@@ -167,10 +187,13 @@ def main() -> None:
     ap.add_argument("--data", type=Path, default=Path("data/synth/posts.jsonl"))
     ap.add_argument("--model", type=Path, default=Path("models/clf.joblib"))
     ap.add_argument("--mode", choices=["text", "full", "both"], default="both")
-    ap.add_argument("--handwritten", type=Path, default=Path("eval/handwritten.jsonl"),
-                    help="независимый ручной набор, не из генератора")
-    ap.add_argument("--blind", type=Path, default=Path("eval/handwritten_blind.jsonl"),
-                    help="слепой ручной набор: зафиксирован до настройки правил, на нём не настраиваемся")
+    ap.add_argument("--handwritten", type=Path, nargs="*",
+                    default=[Path("eval/handwritten.jsonl"), Path("eval/dev_round2.jsonl"),
+                             Path("eval/handwritten_blind.jsonl"), Path("eval/handwritten_blind_v2.jsonl")],
+                    help="ручные dev-наборы, не из генератора: на них правила настраиваются")
+    ap.add_argument("--blind", type=Path, nargs="*",
+                    default=[Path("eval/handwritten_blind_v3.jsonl")],
+                    help="слепые наборы: написаны до правок агентом без доступа к коду, на них только измеряем")
     ap.add_argument("--report", type=Path, default=Path("reports/eval.json"))
     ap.add_argument("--markdown", type=Path, default=Path("docs/metrics.md"))
     args = ap.parse_args()
@@ -181,10 +204,10 @@ def main() -> None:
               "results": {}}
     if args.mode in ("text", "both"):
         report["results"]["text"] = eval_text(posts, settings, args.model)
-    if args.handwritten.exists():
-        report["results"]["handwritten"] = eval_text(load_handwritten(args.handwritten), settings, args.model)
-    if args.blind.exists():
-        report["results"]["handwritten_blind"] = eval_text(load_handwritten(args.blind), settings, args.model)
+    for kind, paths in (("dev", args.handwritten), ("blind", args.blind)):
+        for path in paths:
+            if path.exists():
+                report["results"][f"{kind}:{path.stem}"] = eval_text(load_handwritten(path), settings, args.model)
     if args.mode in ("full", "both"):
         report["results"]["full"] = eval_full(posts, args.data.parent, args.model)
     args.report.parent.mkdir(parents=True, exist_ok=True)

@@ -37,6 +37,8 @@ KK_TO_RU = str.maketrans({"ұ": "у", "ү": "у", "қ": "к", "ң": "н", "ғ": 
 # Категории, которые выбрасываются из свёрнутого текста: невидимые символы и одиночные диакритики
 _DROP_CATEGORIES = ("Cf", "Mn")
 _VOWELS_LAT = set("aeiouy")
+# «к а з и н о», «п.и.р.а.м.и.д.а»: четыре и больше одиночных букв через один разделитель склеиваем в слово
+_SPACED_RE = re.compile(r"(?<!\w)[^\W\d_](?:[ .\-*·_][^\W\d_]){3,}(?!\w)")
 
 _TOKEN_RE = re.compile(r"\S+")
 _URLISH_RE = re.compile(
@@ -153,6 +155,15 @@ def _fold_token(token: str, base: int) -> list[tuple[str, int, int]]:
     return [(ch.lower(), base + i, base + i + 1) for i, ch in enumerate(token)]
 
 
+def _join_spaced_letters(chars: list[tuple[str, int, int]]) -> list[tuple[str, int, int]]:
+    """Убрать разделители внутри «р а з р я д к и»; у букв остаются их позиции в оригинале."""
+    text = "".join(c for c, _, _ in chars)
+    drop: set[int] = set()
+    for match in _SPACED_RE.finditer(text):
+        drop.update(range(match.start() + 1, match.end(), 2))
+    return [ch for i, ch in enumerate(chars) if i not in drop] if drop else chars
+
+
 def normalize_text(raw: str) -> NormText:
     """Свернуть текст для поиска признаков, сохранив связь с оригиналом."""
     original = unicodedata.normalize("NFKC", raw or "")
@@ -170,6 +181,7 @@ def normalize_text(raw: str) -> NormText:
     # lower() может вернуть несколько символов: раскладываем по одному с тем же диапазоном.
     folded_chars = [("е" if c == "ё" else c.translate(KK_TO_RU), s, e)
                     for chunk, s, e in chars for c in chunk if unicodedata.category(c) not in _DROP_CATEGORIES]
+    folded_chars = _join_spaced_letters(folded_chars)
     folded = "".join(c for c, _, _ in folded_chars)
     spans = tuple((s, e) for _, s, e in folded_chars)
     return NormText(original=original, folded=folded, spans=spans)

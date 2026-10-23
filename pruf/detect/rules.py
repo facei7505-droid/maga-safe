@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 
 from pruf.detect.lexicon import FEATURES, Feature
@@ -10,6 +11,8 @@ from pruf.normalize.text import NormText
 
 QUOTE_CONTEXT = 25
 MAX_QUOTES_PER_FEATURE = 2
+# Цитата внутри поста: «вы выиграли iPhone, оплатите доставку». В предупреждении это пересказ схемы, а не сама схема
+_QUOTED_RE = re.compile(r"«[^»\n]{1,300}»|“[^”\n]{1,300}”|„[^“\n]{1,300}“|\"[^\"\n]{1,300}\"")
 
 
 @lru_cache(maxsize=1)
@@ -39,4 +42,15 @@ def find_features(text: NormText, source: str = "text") -> list[Evidence]:
                     stop=feature.stop, core=feature.core,
                 ))
                 hits += 1
-    return found
+    return _drop_quoted_in_warnings(found, text.original)
+
+
+def _drop_quoted_in_warnings(found: list[Evidence], original: str) -> list[Evidence]:
+    """В посте-предупреждении признаки, целиком попавшие в кавычки, не считаются: это цитата мошенников."""
+    if not any(e.stop and e.feature_id.endswith(".awareness") for e in found):
+        return found
+    quoted = [m.span() for m in _QUOTED_RE.finditer(original)]
+    if not quoted:
+        return found
+    return [e for e in found
+            if e.stop or not e.span or not any(qs <= e.span[0] and e.span[1] <= qe for qs, qe in quoted)]

@@ -10,7 +10,7 @@
 4. Один-единственный признак трека без общих признаков даёт не больше низкого риска:
    риск строится на сочетании сигналов.
 5. Высокий риск только при обязательном сочетании: два «ядровых» признака трека
-   или ядровой признак + просьба перевести деньги. Иначе потолок HIGH_THRESHOLD - 1.
+   или ядровой признак + просьба перевести деньги (или ввести данные карты). Иначе потолок HIGH_THRESHOLD - 1.
 6. Стоп-признаки (бесплатное участие, правила, антиреклама) вычитают баллы и
    опускают потолок до среднего.
 7. Контекст (повтор пруфа в рискованных постах, правка пруфа, реквизит из рискованных
@@ -42,6 +42,9 @@ STOP_CAP = HIGH_THRESHOLD - 1
 SINGLE_CAP = MEDIUM_THRESHOLD - 1
 CONTEXT_ONLY_CAP = HIGH_THRESHOLD - 1
 NO_COMBO_CAP = HIGH_THRESHOLD - 1
+# Вспомогательные признаки сами трек не открывают: «3,5 млн» в сборе на операцию — не розыгрыш
+AUX_FEATURES = frozenset({"lottery.big_prize", "pyramid.closed_group", "pyramid.regular_payout"})
+MONEY_ASKS = frozenset({"common.kaspi_transfer", "common.card_phish"})  # просьба отдать деньги или данные карты
 STRONG_CONTEXT = 15.0  # сигнал реестра/графа такой силы учитывается даже без признаков в тексте
 
 
@@ -57,7 +60,7 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
                 context: list[Evidence]) -> TrackScore:
     own = _unique_by_feature(e for e in evidence if e.track == track)
     common = _unique_by_feature(e for e in evidence if e.track == "common")
-    has_positive = any(e.weight > 0 for e in own.values())
+    has_positive = any(e.weight > 0 and e.feature_id not in AUX_FEATURES for e in own.values())
     points = sum(e.weight for e in own.values())
     if has_positive:
         points += sum(e.weight for e in common.values())
@@ -79,7 +82,7 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
 
     # Потолки применяются после контекста: связи с другими постами не отменяют правила методики.
     positives = [e for e in own.values() if e.weight > 0]
-    has_transfer = "common.kaspi_transfer" in common
+    has_transfer = bool(MONEY_ASKS & common.keys())
     if not has_positive and track_context and score > CONTEXT_ONLY_CAP:
         score, capped = CONTEXT_ONLY_CAP, "собственных признаков нет, только связь с рискованными постами"
     if len(positives) == 1 and not has_transfer and not track_context and score > SINGLE_CAP:
