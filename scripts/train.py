@@ -8,8 +8,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pruf.detect.classifier import TrackClassifier  # noqa: E402
-from pruf.synth.generator import read_jsonl  # noqa: E402
+from pruf.detect.classifier import TrackClassifier
+from pruf.synth.generator import read_jsonl
 
 
 def main() -> None:

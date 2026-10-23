@@ -32,7 +32,7 @@ class Link:
 
 def canonical_domain(host: str) -> str:
     host = host.lower().strip(".")
-    return host[4:] if host.startswith("www.") else host
+    return host.removeprefix("www.")
 
 
 def extract_links(text: str) -> list[Link]:

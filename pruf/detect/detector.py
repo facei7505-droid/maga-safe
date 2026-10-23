@@ -12,13 +12,18 @@ from pruf.detect.classifier import TrackClassifier
 from pruf.detect.llm import LlmArbiter
 from pruf.detect.rules import find_features
 from pruf.models import HIGH_THRESHOLD, MEDIUM_THRESHOLD, Analysis, Evidence
-from pruf.normalize.links import MAX_RESOLVE_PER_POST, Link, extract_links, resolve_shortener
+from pruf.normalize.links import (
+    MAX_RESOLVE_PER_POST,
+    Link,
+    extract_links,
+    resolve_shortener,
+)
 from pruf.normalize.requisites import Requisite, extract_requisites, redact_cards
 from pruf.normalize.text import normalize_text
 from pruf.scoring import combine
 
 log = logging.getLogger(__name__)
-_CASINO_DOMAIN_RE = re.compile(r"(casino|kazino|slot|1xbet|1win|pin-?up|mostbet|melbet|vulkan|azino|bet\b|\.bet$)", re.I)
+_CASINO_DOMAIN_RE = re.compile(r"(casino|kazino|slot|1xbet|1win|pin-?up|mostbet|melbet|vulkan|azino|bet\b|\.bet$)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)

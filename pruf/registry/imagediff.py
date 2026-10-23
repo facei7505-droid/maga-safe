@@ -73,10 +73,45 @@ def diff_tokens(a: list[OcrToken], b: list[OcrToken]) -> list[TokenChange]:
         tb = b[best_j]
         if _norm(ta.text) != _norm(tb.text):
             changes.append(TokenChange(_classify(ta.text, tb.text), ta.text, tb.text, ta.box, tb.box))
-    for j, tb in enumerate(b):
-        if j not in used:
-            changes.append(TokenChange("added", "", tb.text, None, tb.box))
-    return changes
+    added = [tb for j, tb in enumerate(b) if j not in used]
+    return _pair_split_tokens(changes, added, off_x, off_y)
+
+
+def _inside(tok: OcrToken, box: tuple[float, float, float, float], off_x: float, off_y: float) -> bool:
+    x0, y0, x1, y1 = box
+    cx, cy = tok.center[0] - off_x, tok.center[1] - off_y
+    return x0 - MAX_CENTER_DISTANCE <= cx <= x1 + MAX_CENTER_DISTANCE and y0 - MAX_CENTER_DISTANCE <= cy <= y1 + MAX_CENTER_DISTANCE
+
+
+def _union(boxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def _pair_split_tokens(changes: list[TokenChange], added: list[OcrToken], off_x: float, off_y: float) -> list[TokenChange]:
+    """OCR по-разному режет строку на копиях: «+150 000 T» против «+150» и «000 T», или центр
+    перерисованной суммы сместился. Склеиваем добавленные токены внутри рамки удалённого:
+    тот же текст — не отличие, другие цифры при том же виде — правка суммы или даты."""
+    out: list[TokenChange] = []
+    taken: set[int] = set()
+    for ch in changes:
+        if ch.kind != "removed" or ch.box_before is None or not _DIGIT_RE.search(ch.before):
+            out.append(ch)
+            continue
+        parts = [(i, t) for i, t in enumerate(added) if i not in taken and _inside(t, ch.box_before, off_x, off_y)]
+        if not parts:
+            out.append(ch)
+            continue
+        parts.sort(key=lambda p: p[1].center[0])
+        joined = " ".join(t.text for _, t in parts)
+        kind = "same" if _norm(joined) == _norm(ch.before) else _classify(ch.before, joined)
+        if kind == "text":
+            out.append(ch)
+            continue
+        taken.update(i for i, _ in parts)
+        if kind != "same":
+            out.append(TokenChange(kind, ch.before, joined, ch.box_before, _union([t.box for _, t in parts])))
+    out.extend(TokenChange("added", "", t.text, None, t.box) for i, t in enumerate(added) if i not in taken)
+    return out
 
 
 def summarize_changes(changes: list[TokenChange]) -> str:

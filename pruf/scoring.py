@@ -5,8 +5,8 @@
    добавляются, только если у трека есть свой положительный признак.
 2. rule_score = 100 * (1 - exp(-points / SATURATION)).
 3. Если есть ML: score = max(rule_score, 0.65 * rule_score + 0.35 * 100 * p(track)),
-   то есть модель может только поднять балл. Без признаков ML даёт максимум ML_ONLY_CAP
-   (средний риск, дальше решает LLM или аналитик).
+   то есть модель может только поднять балл. Без признаков ML даёт максимум ML_ONLY_CAP,
+   это ниже среднего риска: одна модель без цитируемых признаков пост в очередь не ставит.
 4. Один-единственный признак трека без общих признаков даёт не больше низкого риска:
    риск строится на сочетании сигналов.
 5. Высокий риск только при обязательном сочетании: два «ядровых» признака трека
@@ -26,11 +26,18 @@ import math
 from collections.abc import Iterable, Mapping
 
 from pruf.detect.lexicon import TRACK_LABELS, TRACKS
-from pruf.models import HIGH_THRESHOLD, MEDIUM_THRESHOLD, Analysis, Evidence, TrackScore, level_for
+from pruf.models import (
+    HIGH_THRESHOLD,
+    MEDIUM_THRESHOLD,
+    Analysis,
+    Evidence,
+    TrackScore,
+    level_for,
+)
 
 SATURATION = 35.0
 ML_WEIGHT = 0.35
-ML_ONLY_CAP = 50.0
+ML_ONLY_CAP = 30.0  # ниже порога «средний»: одна модель без признаков не поднимает пост в очередь
 STOP_CAP = HIGH_THRESHOLD - 1
 SINGLE_CAP = MEDIUM_THRESHOLD - 1
 CONTEXT_ONLY_CAP = HIGH_THRESHOLD - 1

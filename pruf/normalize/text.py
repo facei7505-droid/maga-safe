@@ -35,7 +35,7 @@ _VOWELS_LAT = set("aeiouy")
 
 _TOKEN_RE = re.compile(r"\S+")
 _URLISH_RE = re.compile(
-    r"(://|^www\.|@\w|^\+?\d[\d\-()]{6,}$|\.(kz|ru|com|me|io|net|org|bet|xyz|site|online|top|club|app|ly|su|cc|pro)\b)",
+    r"(://|^www\.|^@\w|^\+?\d[\d\-()]{6,}$|\.(kz|ru|com|me|io|net|org|bet|xyz|site|online|top|club|app|ly|su|cc|pro)\b)",
     re.IGNORECASE,
 )
 
@@ -158,7 +158,9 @@ def normalize_text(raw: str) -> NormText:
             chars.append((" ", last_end, match.start()))
         chars.extend(_fold_token(match.group(), match.start()))
         last_end = match.end()
-    folded_chars = [("е" if c == "ё" else c, s, e) for c, s, e in chars]
+    # Невидимые символы (U+200B, U+00AD, U+200D, U+FEFF) рвут слова и прячут признаки: выбрасываем,
+    # карта позиций остаётся верной, т.к. каждый символ хранит свой диапазон в оригинале.
+    folded_chars = [("е" if c == "ё" else c, s, e) for c, s, e in chars if unicodedata.category(c) != "Cf"]
     folded = "".join(c for c, _, _ in folded_chars)
     spans = tuple((s, e) for _, s, e in folded_chars)
     return NormText(original=original, folded=folded, spans=spans)

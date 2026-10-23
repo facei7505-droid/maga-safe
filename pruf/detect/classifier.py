@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import joblib
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -33,21 +33,21 @@ class TrackClassifier:
         self._pipeline = pipeline
 
     @classmethod
-    def train(cls, texts: Sequence[str], labels: Sequence[str]) -> "TrackClassifier":
+    def train(cls, texts: Sequence[str], labels: Sequence[str]) -> TrackClassifier:
         folded = [normalize_text(t).folded for t in texts]
         pipeline = build_pipeline()
         pipeline.fit(folded, list(labels))
         return cls(pipeline)
 
     @classmethod
-    def load(cls, path: Path) -> "TrackClassifier | None":
+    def load(cls, path: Path) -> TrackClassifier | None:
         if not path.exists():
             return None
         # joblib = pickle: грузим только модель, обученную нашим scripts/train.py и лежащую в каталоге
         # проекта. Путь задаёт оператор через PRUF_MODEL_PATH; файлы от пользователей сюда не попадают.
         try:
             return cls(joblib.load(path))
-        except (OSError, ValueError, EOFError) as exc:
+        except Exception as exc:  # noqa: BLE001 — битый файл модели не должен ронять сервис, работаем без ML
             log.warning("не удалось загрузить модель %s: %s", path, exc)
             return None
 

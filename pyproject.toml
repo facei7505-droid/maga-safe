@@ -1,0 +1,18 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["pruf"]
+omit = [
+    "pruf/bot/*",
+    "pruf/synth/generator.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

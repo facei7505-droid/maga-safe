@@ -116,9 +116,15 @@ def parse_llm_output(raw: str, source_text: str) -> LlmVerdict | None:
     except json.JSONDecodeError:
         log.warning("LLM вернул невалидный JSON")
         return None
+    if not isinstance(data, dict):
+        log.warning("LLM вернул JSON не того вида")
+        return None
     evidence: list[Evidence] = []
     lower_source = source_text.lower()
-    for item in data.get("signals", []):
+    signals = data.get("signals", [])
+    for item in signals if isinstance(signals, list) else []:
+        if not isinstance(item, dict):
+            continue
         quote = str(item.get("quote", "")).strip()
         track = item.get("track")
         if not quote or track not in TRACKS:

@@ -20,6 +20,8 @@ from typing import Any
 import networkx as nx
 
 from pruf.pipeline import ALLOWLIST_DOMAINS, RISKY_LEVELS
+from pruf.registry.imagediff import diff_tokens
+from pruf.registry.registry import changes_to_json, tokens_from_json
 from pruf.storage.db import Database
 
 LINK_EDGES = ("mentions", "links_to", "reuses")
@@ -203,10 +205,11 @@ class CaseGraph:
 
 
 def artifact_timeline(db: Database, artifact_id: int, limit: int = 500) -> dict[str, Any]:
-    """Все появления пруфа: обход рёбер совпадений от артефакта, по времени публикации."""
+    """Все появления пруфа: обход рёбер совпадений от артефакта, по времени публикации.
+    Дифф каждой копии считается относительно выбранного артефакта, в одном направлении,
+    поэтому правка видна и у копий, совпавших с ним только через другие копии."""
     seen = {artifact_id}
     frontier = [artifact_id]
-    diffs: dict[int, Any] = {}
     while frontier and len(seen) < limit:
         nxt = []
         for aid in frontier:
@@ -215,18 +218,23 @@ def artifact_timeline(db: Database, artifact_id: int, limit: int = 500) -> dict[
                 if other not in seen:
                     seen.add(other)
                     nxt.append(other)
-                if m["diff"] and (m["artifact_id"] == artifact_id or m["other_id"] == artifact_id):
-                    diffs[other] = m["diff"]
         frontier = nxt
     post_of = db.artifact_post_ids(seen)
     posts = {p["id"]: p for p in db.get_posts(set(post_of.values()))}
+    root = db.get_artifact(artifact_id)
+    root_tokens = tokens_from_json(root["ocr"]) if root and root.get("ocr") else []
     items = []
     for aid in seen:
         post = posts.get(post_of.get(aid, -1))
         if not post:
             continue
+        post.pop("label", None)
         art = db.get_artifact(aid)
+        diff = None
+        if aid != artifact_id and root_tokens and art and art.get("ocr"):
+            changes = diff_tokens(root_tokens, tokens_from_json(art["ocr"]))
+            diff = {"changes": changes_to_json(changes)} if changes else None
         items.append({"artifact_id": aid, "kind": art["kind"] if art else None, "post": post,
-                      "is_root": aid == artifact_id, "diff": diffs.get(aid)})
+                      "is_root": aid == artifact_id, "diff": diff})
     items.sort(key=lambda i: (i["post"]["posted_at"] or "", i["artifact_id"]))
     return {"artifact_id": artifact_id, "appearances": len(items), "items": items}

@@ -16,7 +16,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pruf.synth import templates as T
-from pruf.synth.screens import Receipt, edit_amount, render_receipt, repost_variant, to_jpeg
+from pruf.synth.screens import (
+    Receipt,
+    edit_amount,
+    render_receipt,
+    repost_variant,
+    to_jpeg,
+)
 
 TRACK_TEMPLATES = {"lottery": T.LOTTERY, "casino": T.CASINO, "pyramid": T.PYRAMID}
 HELD_OUT_EVERY = 4  # каждый 4-й шаблон отложен для теста

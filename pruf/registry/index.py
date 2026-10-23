@@ -12,7 +12,13 @@ import threading
 
 import numpy as np
 
-from pruf.registry.hashing import MINHASH_BANDS, MINHASH_PERM, PDQ_WORDS, band_keys, band_keys_batch
+from pruf.registry.hashing import (
+    MINHASH_BANDS,
+    MINHASH_PERM,
+    PDQ_WORDS,
+    band_keys,
+    band_keys_batch,
+)
 
 PDQ_MATCH_DISTANCE = 40
 TEXT_MATCH_SIMILARITY = 0.55

@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pruf.synth.generator import Generator, write_jsonl  # noqa: E402
+from pruf.synth.generator import Generator, write_jsonl
 
 
 def main() -> None:

@@ -9,14 +9,22 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 import numpy as np
-
 from PIL import Image
 
 from pruf.normalize.ocr import OcrToken, OcrUnavailable, run_ocr, tokens_to_text
 from pruf.registry.forensics import TokenAnomaly, token_anomalies
-from pruf.registry.hashing import minhash, open_image, pdq_from_hex, pdq_hash, pdq_hex, sha256_bytes
+from pruf.registry.hashing import (
+    minhash,
+    open_image,
+    pdq_from_hex,
+    pdq_hash,
+    pdq_hex,
+    sha256_bytes,
+)
 from pruf.registry.imagediff import TokenChange, diff_tokens
 from pruf.registry.index import ImageIndex, TextIndex
+from pruf.storage.blobs import BlobStore
+from pruf.storage.db import Database
 
 
 def strong_tokens(tokens: list[OcrToken]) -> frozenset[str]:
@@ -29,8 +37,6 @@ def strong_tokens(tokens: list[OcrToken]) -> frozenset[str]:
         if sum(ch.isdigit() for ch in compact) >= 4:
             out.add(compact)
     return frozenset(out)
-from pruf.storage.blobs import BlobStore
-from pruf.storage.db import Database
 
 log = logging.getLogger(__name__)
 MIN_TEXT_FOR_INDEX = 40
@@ -38,6 +44,9 @@ PDQ_STRICT = 40  # почти точная копия
 PDQ_LOOSE = 96  # кандидат, если совпадают «сильные» токены OCR (обрезка, подписи канала)
 MIN_SHARED_STRONG = 2
 MIN_STRONG_OVERLAP = 0.5
+# Разные чеки одного шаблона (банк, магазин) визуально почти одинаковы и проходят PDQ_STRICT.
+# Если у обоих есть сильные токены и они почти не совпадают, это другой документ, а не копия.
+TEMPLATE_MAX_OVERLAP = 0.25
 MAX_DIFFS_PER_IMAGE = 20
 _FORMAT_EXT = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}
 
@@ -123,13 +132,15 @@ class ProofRegistry:
                 shared_counts[aid] += 1
         accepted: list[tuple[int, int]] = []
         for aid, dist in loose.items():
-            if dist <= PDQ_STRICT:
-                accepted.append((aid, dist))
-                continue
             shared = shared_counts.get(aid, 0)
             other = self._strong_of.get(aid, frozenset())
-            union = len(strong | other) or 1
-            if shared >= MIN_SHARED_STRONG and shared / union >= MIN_STRONG_OVERLAP:
+            overlap = shared / (len(strong | other) or 1)
+            if dist <= PDQ_STRICT:
+                same_template_only = len(strong) >= MIN_SHARED_STRONG and len(other) >= MIN_SHARED_STRONG \
+                    and overlap < TEMPLATE_MAX_OVERLAP
+                if not same_template_only:
+                    accepted.append((aid, dist))
+            elif shared >= MIN_SHARED_STRONG and overlap >= MIN_STRONG_OVERLAP:
                 accepted.append((aid, dist))
         return sorted(accepted, key=lambda x: x[1])
 

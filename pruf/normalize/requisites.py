@@ -15,7 +15,7 @@ _PHONE_RE = re.compile(r"(?<![\d+])(?:\+7|8)[\s\-()]*7\d{2}[\s\-()]*\d{3}[\s\-]*
 _CARD_RE = re.compile(r"(?<!\d)(?:\d{4}[\s\-]?){3}\d{4}(?!\d)")
 _IBAN_RE = re.compile(r"\bKZ\d{2}[A-Z0-9]{16}\b", re.IGNORECASE)
 _KASPI_LINK_RE = re.compile(r"\b(?:https?://)?(?:pay\.)?kaspi\.(?:kz|me)/(?:pay/)?[\w\-/]+", re.IGNORECASE)
-_PROMO_RE = re.compile(r"(?:промокод|promo\s*code|promokod|промо)\s*[:\-]?\s*([A-Za-z0-9_]{4,20})", re.IGNORECASE)
+_PROMO_RE = re.compile(r"(?:промокод\w*|promo\s*code|promokod\w*|промо)\s*[:\-]?\s*([A-Za-z0-9_]{4,20})", re.IGNORECASE)
 
 
 @dataclass(frozen=True)

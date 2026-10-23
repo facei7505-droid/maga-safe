@@ -16,7 +16,12 @@ from pruf.normalize.links import Link
 from pruf.normalize.requisites import redact_cards
 from pruf.normalize.text import normalize_text
 from pruf.registry.hashing import open_image
-from pruf.registry.registry import ImageResult, ProofRegistry, TextResult, changes_to_json
+from pruf.registry.registry import (
+    ImageResult,
+    ProofRegistry,
+    TextResult,
+    changes_to_json,
+)
 from pruf.storage.blobs import BlobStore
 from pruf.storage.db import Database
 
@@ -133,7 +138,8 @@ class Pruf:
             risky = [p for p in others if levels[p][0] in RISKY_LEVELS]
             if risky:
                 tracks = sorted({levels[p][1] for p in risky if levels[p][1]})
-                out.append(Evidence(f"graph.requisite.{req['kind']}", _major_track(levels, risky),
+                # common: реквизит связывает треки, и улика нужна посту любого трека
+                out.append(Evidence(f"graph.requisite.{req['kind']}", "common",
                                     f"Реквизит встречался в {len(risky)} постах с признаками схем (треки: {', '.join(tracks)})",
                                     RISKY_REQUISITE_WEIGHT, "graph", quote=req["display"]))
         return out
@@ -206,5 +212,9 @@ class Pruf:
         }
 
     def analyze_only(self, text: str) -> dict[str, Any]:
-        """Быстрая проверка без сохранения (бот, eval)."""
-        return self.detector.detect([SourceText("text", text)]).analysis.to_dict()
+        """Быстрая проверка без сохранения (бот, проверка из дашборда): реестр только читается,
+        поэтому номер, уже засвеченный в рискованных постах, виден и здесь."""
+        sources = [SourceText("text", text)]
+        first = self.detector.detect(sources, allow_llm=False)
+        context = self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
+        return self.detector.detect(sources, context).analysis.to_dict()

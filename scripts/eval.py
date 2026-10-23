@@ -22,11 +22,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("PRUF_DEV_MODE", "1")
 
-from pruf.config import Settings  # noqa: E402
-from pruf.detect.classifier import TrackClassifier  # noqa: E402
-from pruf.detect.detector import Detector, SourceText  # noqa: E402
-from pruf.detect.lexicon import TRACKS  # noqa: E402
-from pruf.synth.generator import SynthPost, read_jsonl  # noqa: E402
+from pruf.config import Settings
+from pruf.detect.classifier import TrackClassifier
+from pruf.detect.detector import Detector, SourceText
+from pruf.detect.lexicon import TRACKS
+from pruf.synth.generator import SynthPost, read_jsonl
 
 LEVELS_POS = {"medium": ("medium", "high"), "high": ("high",)}
 

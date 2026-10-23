@@ -11,7 +11,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -21,10 +30,10 @@ from pydantic import BaseModel, Field
 from pruf.api.security import RateLimiter, require_analyst, require_bank, sniff_upload
 from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
+from pruf.graph.builder import CaseGraph, artifact_timeline
 from pruf.normalize.audio import whisper_available
 from pruf.normalize.ocr import ocr_available
 from pruf.normalize.requisites import extract_requisites
-from pruf.graph.builder import CaseGraph, artifact_timeline
 from pruf.pipeline import Pruf, Submission, Upload
 from pruf.registry.forensics import ela_heatmap_png
 from pruf.registry.hashing import open_image
@@ -161,7 +170,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
                                               channel=channel, posted_at=posted_at, source="dashboard"))
         except Image.DecompressionBombError as exc:
             raise HTTPException(status_code=413, detail="Изображение слишком большое") from exc
-        except (UnidentifiedImageError, ValueError) as exc:
+        except (UnidentifiedImageError, ValueError, OSError) as exc:  # OSError: обрезанный или битый файл
             log.warning("не удалось обработать файл: %s", exc)
             raise HTTPException(status_code=422, detail="Не удалось прочитать файл") from exc
         return ok(result)
@@ -242,7 +251,8 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     @app.get("/api/v1/posts/{post_id}/related")
     def related(post_id: int, actor: str = Depends(analyst)):
         ids = graph().related_posts(post_id)
-        return ok(core().db.get_posts(ids[:200]), total=len(ids))
+        rows = [{k: v for k, v in r.items() if k != "label"} for r in core().db.get_posts(ids[:200])]
+        return ok(rows, total=len(ids))
 
     @app.get("/api/v1/artifacts/{artifact_id}/timeline")
     def timeline(artifact_id: int, actor: str = Depends(analyst)):
