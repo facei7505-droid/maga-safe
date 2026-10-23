@@ -164,6 +164,10 @@ class Database:
             post["analysis"] = json.loads(post.pop("analysis_json"))
         return post
 
+    def find_post_by_external_id(self, external_id: str) -> dict[str, Any] | None:
+        row = self._one("SELECT id FROM posts WHERE external_id=? ORDER BY id LIMIT 1", (external_id,))
+        return self.get_post(row["id"]) if row else None
+
     def get_posts(self, ids: Iterable[int]) -> list[dict[str, Any]]:
         ids = list(ids)
         if not ids:
