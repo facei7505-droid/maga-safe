@@ -48,7 +48,7 @@ class TrackClassifier:
         try:
             return cls(joblib.load(path))
         except Exception as exc:  # noqa: BLE001 — битый файл модели не должен ронять сервис, работаем без ML
-            log.warning("не удалось загрузить модель %s: %s", path, exc)
+            log.error("не удалось загрузить модель %s, ML выключен: %s", path, exc)
             return None
 
     def save(self, path: Path) -> None:

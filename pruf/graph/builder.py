@@ -204,9 +204,12 @@ class CaseGraph:
         return [sorted(int(n[5:]) for n in c) for c in nx.connected_components(reuse) if len(c) > 1]
 
 
+MAX_TIMELINE_DIFFS = 200
+
+
 def artifact_timeline(db: Database, artifact_id: int, limit: int = 500) -> dict[str, Any]:
     """Все появления пруфа: обход рёбер совпадений от артефакта, по времени публикации.
-    Дифф каждой копии считается относительно выбранного артефакта, в одном направлении,
+    Дифф каждой копии считается относительно выбранного артефакта (а не предыдущей копии),
     поэтому правка видна и у копий, совпавших с ним только через другие копии."""
     seen = {artifact_id}
     frontier = [artifact_id]
@@ -215,26 +218,26 @@ def artifact_timeline(db: Database, artifact_id: int, limit: int = 500) -> dict[
         for aid in frontier:
             for m in db.matches_for(aid):
                 other = m["other_id"] if m["artifact_id"] == aid else m["artifact_id"]
-                if other not in seen:
+                if other not in seen and len(seen) < limit:
                     seen.add(other)
                     nxt.append(other)
         frontier = nxt
-    post_of = db.artifact_post_ids(seen)
-    posts = {p["id"]: p for p in db.get_posts(set(post_of.values()))}
-    root = db.get_artifact(artifact_id)
-    root_tokens = tokens_from_json(root["ocr"]) if root and root.get("ocr") else []
+    arts = db.artifacts_by_ids(seen)
+    posts = {p["id"]: p for p in db.get_posts({a["post_id"] for a in arts.values()})}
+    root = arts.get(artifact_id)
+    root_tokens = tokens_from_json(root["ocr"]) if root and root["ocr"] else []
     items = []
-    for aid in seen:
-        post = posts.get(post_of.get(aid, -1))
+    for aid, art in arts.items():
+        post = posts.get(art["post_id"])
         if not post:
             continue
         post.pop("label", None)
-        art = db.get_artifact(aid)
-        diff = None
-        if aid != artifact_id and root_tokens and art and art.get("ocr"):
-            changes = diff_tokens(root_tokens, tokens_from_json(art["ocr"]))
-            diff = {"changes": changes_to_json(changes)} if changes else None
-        items.append({"artifact_id": aid, "kind": art["kind"] if art else None, "post": post,
-                      "is_root": aid == artifact_id, "diff": diff})
+        items.append({"artifact_id": aid, "kind": art["kind"], "post": post, "is_root": aid == artifact_id, "diff": None})
     items.sort(key=lambda i: (i["post"]["posted_at"] or "", i["artifact_id"]))
-    return {"artifact_id": artifact_id, "appearances": len(items), "items": items}
+    for item in items[:MAX_TIMELINE_DIFFS]:
+        ocr = arts[item["artifact_id"]]["ocr"]
+        if not item["is_root"] and root_tokens and ocr:
+            changes = diff_tokens(root_tokens, tokens_from_json(ocr))
+            item["diff"] = {"changes": changes_to_json(changes)} if changes else None
+    return {"artifact_id": artifact_id, "appearances": len(items), "items": items,
+            "diffed": min(len(items), MAX_TIMELINE_DIFFS), "truncated": len(seen) >= limit}

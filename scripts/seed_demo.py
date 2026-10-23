@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("PRUF_DEV_MODE", "1")
 
-from pruf.config import Settings
+from pruf.config import ROOT, Settings
 from pruf.detect.classifier import TrackClassifier
 from pruf.pipeline import Pruf, Submission, Upload
 from pruf.synth.generator import Generator
@@ -120,6 +120,8 @@ def main() -> None:
     args = ap.parse_args()
 
     settings = Settings()
+    if args.reset and (not os.environ.get("PRUF_DATA_DIR") or settings.data_dir.resolve() == (ROOT / "data").resolve()):
+        sys.exit("--reset удаляет каталог данных: задайте отдельный PRUF_DATA_DIR (например data/demo), не основной data/")
     if args.reset and settings.data_dir.exists():
         if not (settings.data_dir / "pruf.db").exists() and any(settings.data_dir.iterdir()):
             sys.exit(f"{settings.data_dir} не похож на каталог данных ПРУФ, удалите вручную")

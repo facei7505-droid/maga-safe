@@ -138,8 +138,7 @@ class Pruf:
             risky = [p for p in others if levels[p][0] in RISKY_LEVELS]
             if risky:
                 tracks = sorted({levels[p][1] for p in risky if levels[p][1]})
-                # common: реквизит связывает треки, и улика нужна посту любого трека
-                out.append(Evidence(f"graph.requisite.{req['kind']}", "common",
+                out.append(Evidence(f"graph.requisite.{req['kind']}", _major_track(levels, risky),
                                     f"Реквизит встречался в {len(risky)} постах с признаками схем (треки: {', '.join(tracks)})",
                                     RISKY_REQUISITE_WEIGHT, "graph", quote=req["display"]))
         return out
@@ -215,9 +214,11 @@ class Pruf:
         """Быстрая проверка текста без сохранения."""
         return self.check(text)["analysis"]
 
-    def check(self, text: str | None, images: tuple[bytes, ...] = (), transcript: str | None = None) -> dict[str, Any]:
+    def check(self, text: str | None, images: tuple[bytes, ...] = (), transcript: str | None = None,
+              public: bool = False) -> dict[str, Any]:
         """Проверка без сохранения (бот, дашборд): реестр и граф только читаются, поэтому
-        уже засвеченный номер или скрин, встречавшийся в рискованных постах, виден и здесь."""
+        уже засвеченный номер или скрин, встречавшийся в рискованных постах, виден и здесь.
+        public=True (анонимный пользователь бота): без каналов, сумм с чужих скринов и счётчиков."""
         decoded = [(data, open_image(data)) for data in images]
         got = _Collected(images=[self.registry.lookup_image(data, img) for data, img in decoded])
         degraded = []
@@ -231,6 +232,8 @@ class Pruf:
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))
+        if public:
+            return _public_view(analysis.to_dict(), got)
         return {
             "analysis": analysis.to_dict(),
             "proofs": [{"sha256": r.sha256, "match_count": len(r.matches),
@@ -238,3 +241,28 @@ class Pruf:
                                      "changes": changes_to_json(m.changes)} for m in r.matches[:50]]}
                        for r in got.images],
         }
+
+
+PUBLIC_CONTEXT_LABELS = {
+    "registry.reused_proof": "Этот скрин уже встречался в постах с признаками схем",
+    "registry.text_template": "Текст похож на рассылку из постов с признаками схем",
+    "registry.edited_digits": "На копиях этого скрина отличаются суммы или даты",
+    "registry.ela": "Есть признаки правки изображения в зоне цифр",
+}
+
+
+def _public_view(analysis: dict[str, Any], got: _Collected) -> dict[str, Any]:
+    """Анонимному пользователю бота: только сами признаки. Каналы, суммы с чужих скринов,
+    счётчики и треки из реестра не раскрываются, чтобы бот не стал справочником по базе."""
+    evidence = []
+    for e in analysis["evidence"]:
+        if e["source"] in ("registry", "graph"):
+            label = PUBLIC_CONTEXT_LABELS.get(e["feature_id"])
+            if label is None and e["feature_id"].startswith("graph.requisite."):
+                label = "Этот реквизит уже встречался в постах с признаками схем"
+            e = {**e, "label": label or "Связь с постами с признаками схем", "quote": None, "span": None}
+        evidence.append(e)
+    proofs = [{"seen_before": bool(r.matches),
+               "edited_copies": any(c.kind in ("amount", "date") for m in r.matches for c in m.changes)}
+              for r in got.images]
+    return {"analysis": {**analysis, "evidence": evidence}, "proofs": proofs}

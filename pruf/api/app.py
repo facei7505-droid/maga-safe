@@ -6,8 +6,12 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import os
+import threading
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -44,6 +48,10 @@ from pruf.storage.db import CASE_STATUSES
 log = logging.getLogger(__name__)
 MAX_FILES = 6
 MAX_TEXT = 20_000
+MIN_WEBHOOK_SECRET = 32
+WEBHOOK_MAX_BODY = 1024 * 1024  # update Telegram меньше 1 МБ, файлы приходят ссылками
+BOT_WORKERS = 2
+BOT_MAX_PENDING = 50
 WEB_DIR = ROOT / "web"
 
 
@@ -77,6 +85,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     settings = settings or load_settings()
     limiter = RateLimiter(settings.rate_limit_per_minute)
     state: dict[str, Any] = {}
+    bot_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -85,12 +94,21 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             raise RuntimeError("ПРУФ MVP работает в одном процессе: уберите --workers / WEB_CONCURRENCY")
         state["pruf"] = pruf or Pruf(settings)
         state["graph"] = CaseGraph(state["pruf"].db)
-        if settings.telegram_token and settings.telegram_secret:
-            logging.getLogger("httpx").setLevel(logging.WARNING)  # httpx пишет URL с токеном бота на INFO
-            state["bot"] = BotLogic(state["pruf"], HttpTelegramApi(settings.telegram_token), settings.max_upload_bytes)
+        if settings.telegram_token:
+            if len(settings.telegram_secret) < MIN_WEBHOOK_SECRET or not settings.telegram_secret.replace("-", "").replace("_", "").isalnum():
+                log.warning("вебхук бота выключен: задайте PRUF_TELEGRAM_SECRET из %d+ символов [A-Za-z0-9_-]", MIN_WEBHOOK_SECRET)
+            else:
+                logging.getLogger("httpx").setLevel(logging.WARNING)  # httpx пишет URL с токеном бота на INFO
+                state["bot"] = BotLogic(state["pruf"], HttpTelegramApi(settings.telegram_token), settings.max_upload_bytes)
+                # Обработка вне запроса: OCR и Whisper не занимают пул потоков API, Telegram сразу получает 200.
+                state["bot_pool"] = ThreadPoolExecutor(max_workers=BOT_WORKERS, thread_name_prefix="tg")
+                state["bot_pending"] = 0
+                state["bot_seen"] = deque(maxlen=2000)
         if settings.dev_mode:
             log.warning("PRUF_DEV_MODE=1: токены не обязательны, не используйте в проде")
         yield
+        if "bot_pool" in state:
+            state["bot_pool"].shutdown(wait=True)
         state["pruf"].db.close()
 
     app = FastAPI(title="ПРУФ API", version="0.1.0", lifespan=lifespan)
@@ -110,7 +128,8 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault(
             "Content-Security-Policy",
-            "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'")
+            "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+            "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         return response
 
     def analyst(request: Request) -> str:
@@ -156,6 +175,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         channel: str | None = Form(default=None, max_length=200),
         posted_at: str | None = Form(default=None, max_length=40),
         transcript: str | None = Form(default=None, max_length=MAX_TEXT),
+        store: str | None = Form(default=None, max_length=5),  # строка: у Form(bool) отсутствие поля = False
         files: list[UploadFile] = File(default=[]),
         actor: str = Depends(analyst),
     ):
@@ -171,8 +191,12 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         if not text and not uploads and not transcript:
             raise HTTPException(status_code=400, detail="Нужен текст, файл или расшифровка")
         try:
-            result = core().ingest(Submission(text=text, uploads=tuple(uploads), transcript=transcript,
-                                              channel=channel, posted_at=posted_at, source="dashboard"))
+            if (store or "true").lower() not in ("0", "false", "off", "no"):
+                result = core().ingest(Submission(text=text, uploads=tuple(uploads), transcript=transcript,
+                                                  channel=channel, posted_at=posted_at, source="dashboard"))
+            else:  # проверка без сохранения: файл не попадает в реестр
+                result = core().check(text, images=tuple(u.data for u in uploads if u.kind == "image"),
+                                      transcript=transcript)
         except Image.DecompressionBombError as exc:
             raise HTTPException(status_code=413, detail="Изображение слишком большое") from exc
         except (UnidentifiedImageError, ValueError, OSError) as exc:  # OSError: обрезанный или битый файл
@@ -342,19 +366,42 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
 
     # ---------- Telegram webhook ----------
     @app.post("/api/v1/telegram/webhook")
-    def telegram_webhook(update: dict[str, Any], request: Request):
+    async def telegram_webhook(request: Request):
         bot = state.get("bot")
-        if bot is None:
-            raise HTTPException(status_code=404, detail="Бот не настроен")
         got = request.headers.get("x-telegram-bot-api-secret-token", "")
-        if not hmac.compare_digest(got.encode(), settings.telegram_secret.encode()):
+        # Секрет проверяется до чтения тела; без бота или с чужим секретом ответ одинаковый.
+        if bot is None or not hmac.compare_digest(got.encode(), settings.telegram_secret.encode()):
             limiter.check(f"tgfail:{request.client.host if request.client else 'unknown'}")
-            raise HTTPException(status_code=401, detail="Неверный секрет")
+            raise HTTPException(status_code=404, detail="Не найдено")
+        length = request.headers.get("content-length", "")
+        if not length.isdigit() or int(length) > WEBHOOK_MAX_BODY:
+            raise HTTPException(status_code=413, detail="Слишком большой update")
+        try:
+            update = json.loads(await request.body())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Некорректный JSON") from exc
+        if not isinstance(update, dict):
+            raise HTTPException(status_code=400, detail="Некорректный update")
+        uid = update.get("update_id")
+        with bot_lock:
+            if uid in state["bot_seen"]:
+                return ok({"queued": False, "reason": "duplicate"})  # Telegram повторил доставку
+            state["bot_seen"].append(uid)
+            if state["bot_pending"] >= BOT_MAX_PENDING:
+                log.warning("очередь бота переполнена, update %s пропущен", uid)
+                return ok({"queued": False, "reason": "busy"})
+            state["bot_pending"] += 1
+        state["bot_pool"].submit(run_bot, bot, update)
+        return ok({"queued": True})
+
+    def run_bot(bot: BotLogic, update: dict[str, Any]) -> None:
         try:
             bot.handle(update)
         except Exception:
             log.exception("ошибка обработки update")
-        return ok({"handled": True})
+        finally:
+            with bot_lock:
+                state["bot_pending"] -= 1
 
     @app.get("/api/v1/health")
     def health():

@@ -148,12 +148,15 @@ def test_registry_reloads_indexes_from_database(store, original_jpeg: bytes) -> 
     assert reloaded._strong_of[img.artifact_id] == strong_tokens(FAKE_TOKENS)
 
 
-def test_strong_tokens_keep_only_tokens_with_four_digits() -> None:
-    # Act
-    strong = strong_tokens(FAKE_TOKENS + [OcrToken("Комиссия 0 T", (0, 0, 1, 1), 1.0), OcrToken("14:35", (0, 0, 1, 1), 1.0)])
+def test_strong_tokens_are_digit_runs_independent_of_ocr_split() -> None:
+    # Arrange: одна строка «23.10.2026 14:35» одним токеном и двумя
+    whole = [OcrToken("Дата", (0.1, 0.5, 0.3, 0.52), 1.0), OcrToken("23.10.2026 14:35", (0.5, 0.5, 0.9, 0.52), 1.0),
+             OcrToken("Комиссия 0 T", (0.1, 0.6, 0.4, 0.62), 1.0)]
+    split = [OcrToken("Дата", (0.1, 0.5, 0.3, 0.52), 1.0), OcrToken("23.10.2026", (0.5, 0.5, 0.7, 0.52), 1.0),
+             OcrToken("14:35", (0.75, 0.5, 0.9, 0.52), 1.0)]
 
-    # Assert
-    assert strong == frozenset({"+150000T", "23.10.2026", "QR4821773019", "14:35"})
+    # Act / Assert: короткие серии («0») не входят, разрезанная строка даёт ту же серию
+    assert strong_tokens(whole) == strong_tokens(split) == frozenset({"231020261435"})
 
 
 def test_register_text_skips_short_texts_and_finds_templates(store) -> None:

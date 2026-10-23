@@ -28,16 +28,17 @@ from pruf.storage.db import Database
 
 
 def strong_tokens(tokens: list[OcrToken]) -> frozenset[str]:
-    """Токены с 4+ цифрами (номер квитанции, дата, время, телефон): совпадают у копий одного пруфа
-    и не совпадают у разных чеков одного шаблона. Сумма из 3-значных групп сюда не входит,
-    поэтому подделанная сумма не мешает найти копию."""
-    out = set()
-    for t in tokens:
-        compact = re.sub(r"\s", "", t.text)
-        if sum(ch.isdigit() for ch in compact) >= 4:
-            out.add(compact)
-    return frozenset(out)
+    """Цифровые серии из 4+ цифр (номер квитанции, дата, время, телефон, сумма) по всему тексту скрина.
+    Разделители между цифрами убираются, поэтому серия не зависит от того, как OCR разрезал строку
+    («12.10.2026 14:35» одним токеном или двумя). Совпадают у копий одного пруфа и не совпадают
+    у разных чеков одного шаблона; одна подделанная сумма общий набор почти не меняет."""
+    ordered = sorted(tokens, key=lambda t: (round(t.center[1], 2), t.center[0]))
+    text = _DIGIT_GLUE_RE.sub("", " ".join(t.text for t in ordered))
+    return frozenset(_DIGIT_RUN_RE.findall(text))
 
+
+_DIGIT_GLUE_RE = re.compile(r"(?<=\d)[\s.:,\-/]+(?=\d)")
+_DIGIT_RUN_RE = re.compile(r"\d{4,}")
 log = logging.getLogger(__name__)
 MIN_TEXT_FOR_INDEX = 40
 PDQ_STRICT = 40  # почти точная копия
@@ -128,7 +129,8 @@ class ProofRegistry:
         loose = dict(self.images.query(words, max_distance=PDQ_LOOSE))
         shared_counts: dict[int, int] = defaultdict(int)
         for tok in strong:
-            for aid in self._strong.get(tok, ()):
+            # копия множества: приём может дописывать его параллельно с проверкой из бота
+            for aid in tuple(self._strong.get(tok, ())):
                 shared_counts[aid] += 1
         accepted: list[tuple[int, int]] = []
         for aid, dist in loose.items():

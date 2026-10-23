@@ -63,8 +63,8 @@ def bench_images(n: int, queries: int, rng: np.random.Generator) -> dict:
         lat.append(time.perf_counter() - s)
         found += any(item_id == t for item_id, _ in res)
     s = time.perf_counter()
-    for _ in range(200):
-        index.add(n + _, hashes[0])
+    for k in range(200):
+        index.add(n + k, hashes[0])
     add_ms = (time.perf_counter() - s) / 200 * 1000
     return {"items": len(index), "load_s": round(load_s, 2), "index_mb": round(hashes.nbytes / 2**20, 1),
             "query": _pct(lat), "recall_near_dup": round(found / queries, 4), "add_one_ms": round(add_ms, 3),

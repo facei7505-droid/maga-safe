@@ -112,7 +112,10 @@ def combine(evidence: list[Evidence], ml: Mapping[str, float] | None = None,
     tracks = tuple(score_track(t, evidence, ml, context) for t in TRACKS)
     top = max(tracks, key=lambda t: t.score)
     track = top.track if top.score >= MEDIUM_THRESHOLD else None
-    relevant = [e for e in evidence + context if track is None or e.track in (track, "common") or e.stop]
+    # Контекст реестра и графа показывается всегда: номер из лотереи в посте казино аналитик должен видеть,
+    # хотя в балл казино он не идёт (иначе один признак + чужой трек давал бы высокий риск).
+    relevant = [e for e in evidence if track is None or e.track in (track, "common") or e.stop] + \
+               [c for c in context if track is None or c.track in (track, "common") or c.weight > 0]
     if track and top.ml_probability is not None:
         relevant.append(Evidence(f"ml.{track}", track, f"Модель на n-граммах текста: вероятность трека {top.ml_probability:.0%}",
                                  0, "ml"))

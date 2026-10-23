@@ -206,6 +206,18 @@ class Database:
             art["ocr"] = json.loads(art.pop("ocr_json")) if art.get("ocr_json") else []
         return art
 
+    def artifacts_by_ids(self, artifact_ids: Iterable[int]) -> dict[int, dict[str, Any]]:
+        """Пачкой: id, post_id, kind и разобранный OCR (для таймлайна без запроса на каждую копию)."""
+        ids = list(artifact_ids)
+        out: dict[int, dict[str, Any]] = {}
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            for r in self._all(f"SELECT id, post_id, kind, ocr_json FROM artifacts WHERE id IN ({marks})", chunk):
+                r["ocr"] = json.loads(r.pop("ocr_json")) if r.get("ocr_json") else []
+                out[r["id"]] = r
+        return out
+
     def artifacts_for_post(self, post_id: int) -> list[dict[str, Any]]:
         return self._all("SELECT id, post_id, kind, sha256, ext, pdq, width, height FROM artifacts WHERE post_id=?", (post_id,))
 

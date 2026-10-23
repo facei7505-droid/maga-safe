@@ -115,6 +115,6 @@ def sniff_upload(data: bytes, filename: str | None, content_type: str | None) ->
         return "audio", "mp3"
     if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
         return "audio", "wav"
-    if data[4:8] == b"ftyp":
+    if data[4:8] == b"ftyp" and data[8:12] in (b"M4A ", b"M4B "):  # только аудио-контейнер, не любое видео MP4
         return "audio", "m4a"
     raise HTTPException(status_code=415, detail="Поддерживаются JPEG, PNG, WEBP и аудио OGG/MP3/M4A/WAV")

@@ -58,7 +58,7 @@ PRUF_DEV_MODE=1 PRUF_DATA_DIR=data/demo uvicorn pruf.api.app:create_app --factor
 TELEGRAM_BOT_TOKEN=... PRUF_DATA_DIR=data/demo PRUF_DEV_MODE=1 python -m pruf.bot.telegram
 ```
 
-Или вебхук: задайте `TELEGRAM_BOT_TOKEN` и `PRUF_TELEGRAM_SECRET` для сервера и зарегистрируйте `https://<хост>/api/v1/telegram/webhook` через `setWebhook` с `secret_token`. Бот ничего не сохраняет, только читает реестр: перешлите ему скрин из демо, и он ответит, сколько раз скрин встречался и какие суммы на копиях отличались.
+Или вебхук: задайте `TELEGRAM_BOT_TOKEN` и `PRUF_TELEGRAM_SECRET` для сервера и зарегистрируйте `https://<хост>/api/v1/telegram/webhook` через `setWebhook` с `secret_token`. Бот ничего не сохраняет, только читает реестр: перешлите ему скрин из демо, и он ответит, что скрин уже встречался в постах с признаками схем и что суммы на копиях отличались. Каналы, суммы и счётчики из базы бот не раскрывает. Отвечает только в личных чатах; секрет вебхука не короче 32 символов.
 
 ### API
 

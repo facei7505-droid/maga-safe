@@ -27,7 +27,8 @@ function el(tag, attrs = {}, ...children) {
 }
 
 function token() {
-  try { return localStorage.getItem("pruf_token") || ""; } catch { return ""; }
+  // sessionStorage: токен живёт до закрытия вкладки и не остаётся в браузере надолго
+  try { return sessionStorage.getItem("pruf_token") || ""; } catch { return ""; }
 }
 
 async function api(path, opts = {}) {
@@ -355,6 +356,7 @@ async function submitCheck(ev) {
       const fd = new FormData();
       if (text) fd.append("text", text);
       if ($("#check-channel").value) fd.append("channel", $("#check-channel").value);
+      fd.append("store", store ? "1" : "0");
       for (const f of files) fd.append("files", f);
       ({ data } = await api("/api/v1/analyze", { method: "POST", body: fd }));
     } else {
@@ -408,7 +410,7 @@ function switchView(name) {
 function init() {
   $("#token").value = token();
   $("#token").addEventListener("change", (e) => {
-    try { localStorage.setItem("pruf_token", e.target.value.trim()); } catch { /* приватный режим */ }
+    try { sessionStorage.setItem("pruf_token", e.target.value.trim()); } catch { /* приватный режим */ }
     loadStats(); loadCases();
   });
   document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.view)));
