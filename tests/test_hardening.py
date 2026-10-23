@@ -258,3 +258,33 @@ def test_identical_audio_twice_in_one_post_does_not_match_itself(tmp_path: Path)
     assert result["post_id"]
     assert all(m["post_a"] != m["post_b"] for m in pruf.db.all_matches())
 
+
+
+def test_slow_ocr_does_not_block_other_ingests(tmp_path: Path, original_jpeg: bytes, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: OCR первого поста «висит», пока второй (текстовый) не будет принят
+    import threading
+
+    pruf = Pruf(make_settings(tmp_path), ocr_enabled=False)
+    release = threading.Event()
+    real_read = pruf.registry.read_ocr
+
+    def slow_read(img):
+        release.wait(5)
+        return real_read(img)
+
+    monkeypatch.setattr(pruf.registry, "read_ocr", slow_read)
+    slow = threading.Thread(target=pruf.ingest,
+                            args=(Submission(text="скрин", uploads=(Upload(original_jpeg, "image", "jpg"),)),))
+    slow.start()
+
+    # Act
+    started = time.perf_counter()
+    fast = pruf.ingest(Submission(text=LOTTERY_RU.format(phone=KASPI_PHONE)))
+    elapsed = time.perf_counter() - started
+    release.set()
+    slow.join(5)
+
+    # Assert
+    assert fast["analysis"]["level"] == "high"
+    assert elapsed < 2
+    assert pruf.db.count_posts() == 2

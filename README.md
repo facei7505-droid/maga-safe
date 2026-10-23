@@ -23,7 +23,7 @@
 
 ## Запуск
 
-Нужен Python 3.12+.
+Нужен Python 3.11+ (тесты проходят на 3.11, 3.12 и 3.13).
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

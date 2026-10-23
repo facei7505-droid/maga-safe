@@ -146,6 +146,15 @@ class ProofRegistry:
                 accepted.append((aid, dist))
         return sorted(accepted, key=lambda x: x[1])
 
+    def read_ocr(self, img: Image.Image) -> tuple[list[OcrToken], bool]:
+        """OCR без записи и без блокировок: можно звать до register_image(ocr_tokens=...)."""
+        if not self._ocr_enabled:
+            return [], True
+        try:
+            return run_ocr(img), True
+        except OcrUnavailable:
+            return [], False
+
     def _read_image(self, img: Image.Image, ocr_tokens: list[OcrToken] | None) -> tuple[np.ndarray, int, list[OcrToken], bool]:
         words, quality = pdq_hash(img)
         ocr_ok = True

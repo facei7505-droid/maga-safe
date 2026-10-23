@@ -143,55 +143,67 @@ class Pruf:
     def ingest(self, sub: Submission) -> dict[str, Any]:
         # Сначала проверяем файлы, чтобы битая картинка не оставила пустой пост.
         images = [(up, open_image(up.data)) for up in sub.uploads if up.kind == "image"]
+        # Медленное (OCR, Whisper, LLM) идёт вне общей блокировки: под ней только запись в реестр
+        # и чтение контекста, поэтому параллельные загрузки не выстраиваются в очередь за OCR.
+        ocr = [self.registry.read_ocr(img) for _, img in images]
+        transcript, voice_failed = self._transcribe(sub)
         with self._ingest_lock:
             post_id = self.db.create_post(source=sub.source, channel=sub.channel, author=sub.author,
                                           posted_at=sub.posted_at, text=redact_cards(sub.text),
                                           external_id=sub.external_id, label=sub.label)
-            try:
-                return self._process(post_id, sub, images)
-            except Exception as exc:
-                self.db.mark_post_failed(post_id, type(exc).__name__)
-                raise
+        try:
+            return self._process(post_id, sub, images, ocr, transcript, voice_failed)
+        except Exception as exc:
+            self.db.mark_post_failed(post_id, type(exc).__name__)
+            raise
 
-    def _process(self, post_id: int, sub: Submission, images: list) -> dict[str, Any]:
+    def _transcribe(self, sub: Submission) -> tuple[str | None, bool]:
+        if sub.transcript:
+            return sub.transcript, False
+        audio = next((up for up in sub.uploads if up.kind == "audio"), None)
+        if audio is None:
+            return None, False
+        transcript = transcribe(audio.data, "." + audio.ext)
+        return transcript, transcript is None
+
+    def _process(self, post_id: int, sub: Submission, images: list, ocr: list, transcript: str | None,
+                 voice_failed: bool) -> dict[str, Any]:
         got = _Collected()
         degraded: list[dict[str, str]] = []
-        transcript = sub.transcript
-        for up, img in images:
-            got.images.append(self.registry.register_image(post_id, up.data, img=img))
-        for up in sub.uploads:
-            if up.kind != "audio":
-                continue
-            _aid, same = self.registry.register_audio(post_id, up.data, up.ext)
-            got.audio_posts.extend(same)
-            if not transcript:
-                transcript = transcribe(up.data, "." + up.ext)
-                if transcript is None:
-                    degraded.append({"component": "whisper", "reason": "голосовое не расшифровано: Whisper недоступен"})
+        if voice_failed:
+            degraded.append({"component": "whisper", "reason": "голосовое не расшифровано: Whisper недоступен"})
+        with self._ingest_lock:
+            for (up, img), (tokens, ocr_ok) in zip(images, ocr):
+                result = self.registry.register_image(post_id, up.data, ocr_tokens=tokens, img=img)
+                result.ocr_ok = ocr_ok
+                got.images.append(result)
+            for up in sub.uploads:
+                if up.kind == "audio":
+                    got.audio_posts.extend(self.registry.register_audio(post_id, up.data, up.ext)[1])
+            if sub.text:
+                text_res = self.registry.register_text(post_id, normalize_text(redact_cards(sub.text) or "").folded)
+                if text_res:
+                    got.texts.append(text_res)
+            ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
+            sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""), SourceText("voice", transcript or "")]
+            first = self.detector.detect(sources, allow_llm=False)
+            for r in first.requisites:
+                self.db.link_requisite(post_id, r.kind, r.key, r.display)
+            for link in first.links:
+                if _links_cases(link):
+                    self.db.add_link(post_id, link.url, link.domain, link.resolved)
+            context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
         if any(not r.ocr_ok for r in got.images):
             degraded.append({"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"})
-        if sub.text:
-            text_res = self.registry.register_text(post_id, normalize_text(redact_cards(sub.text) or "").folded)
-            if text_res:
-                got.texts.append(text_res)
-        ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
-        sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""), SourceText("voice", transcript or "")]
-
-        first = self.detector.detect(sources, allow_llm=False)
-        for r in first.requisites:
-            self.db.link_requisite(post_id, r.kind, r.key, r.display)
-        for link in first.links:
-            if _links_cases(link):
-                self.db.add_link(post_id, link.url, link.domain, link.resolved)
-        context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
-        analysis = self.detector.detect(sources, context).analysis
+        analysis = self.detector.detect(sources, context).analysis  # может звать LLM: вне блокировки
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))
-        self.db.update_post_analysis(post_id, score=analysis.score, level=analysis.level, track=analysis.track,
-                                     analysis=analysis.to_dict(), ocr_text=redact_cards(ocr_text),
-                                     transcript=redact_cards(transcript))
-        self.version += 1
+        with self._ingest_lock:
+            self.db.update_post_analysis(post_id, score=analysis.score, level=analysis.level, track=analysis.track,
+                                         analysis=analysis.to_dict(), ocr_text=redact_cards(ocr_text),
+                                         transcript=redact_cards(transcript))
+            self.version += 1
         return {
             "post_id": post_id,
             "analysis": analysis.to_dict(),
