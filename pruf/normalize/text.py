@@ -155,9 +155,20 @@ def _fold_token(token: str, base: int) -> list[tuple[str, int, int]]:
     return [(ch.lower(), base + i, base + i + 1) for i, ch in enumerate(token)]
 
 
+def _is_word_gap(chars: list[tuple[str, int, int]], i: int) -> bool:
+    """Широкий пробел между «р а з р я д к а м и», где соседние промежутки узкие."""
+    c, s, e = chars[i]
+    if c != " " or e - s < 2:
+        return False
+    narrow = [j for j in (i - 2, i + 2) if 0 <= j < len(chars) and chars[j][0] == " " and chars[j][2] - chars[j][1] == 1]
+    return bool(narrow)
+
+
 def _join_spaced_letters(chars: list[tuple[str, int, int]]) -> list[tuple[str, int, int]]:
     """Убрать разделители внутри «р а з р я д к и»; у букв остаются их позиции в оригинале."""
-    text = "".join(c for c, _, _ in chars)
+    # двойной пробел между словами («к а с с а  в з а и м о») — граница слова, а не разделитель букв,
+    # но только если рядом буквы разделены одним пробелом: в «к  а  з  и  н  о» все промежутки двойные
+    text = "".join("|" if _is_word_gap(chars, i) else c for i, (c, _, _) in enumerate(chars))
     drop: set[int] = set()
     for match in _SPACED_RE.finditer(text):
         drop.update(range(match.start() + 1, match.end(), 2))

@@ -345,7 +345,8 @@ def test_summarize_low_without_stop_features() -> None:
 def test_warning_on_one_track_caps_every_track_without_money_request_or_contact() -> None:
     # Arrange: расследование о казино: новостная рамка без реквизита и ссылки
     evidence = [ev("casino.terms", "casino", 40, core=True), ev("casino.mirror", "casino", 40, core=True),
-                ev("casino.bonus", "casino", 30), ev("common.news.awareness", "common", -45, stop=True)]
+                ev("casino.bonus", "casino", 30), ev("common.news.awareness", "common", -45, stop=True),
+                ev("common.news.awareness", "common", -45, stop=True)]
 
     # Act
     analysis = combine(evidence)
@@ -354,6 +355,19 @@ def test_warning_on_one_track_caps_every_track_without_money_request_or_contact(
     casino = next(t for t in analysis.tracks if t.track == "casino")
     assert analysis.level == "low"
     assert casino.capped_reason == "похоже на предупреждение или новость о схеме"
+
+
+def test_single_news_word_in_an_ad_does_not_drop_it_to_low() -> None:
+    # Arrange: «Сотында бәрі дәлелденді» дописано к рекламе с двумя ядровыми признаками
+    evidence = [ev("pyramid.entry", "pyramid", 22, core=True), ev("pyramid.high_return", "pyramid", 24, core=True),
+                ev("pyramid.referral", "pyramid", 26, core=True), ev("common.news.awareness", "common", -45, stop=True)]
+
+    # Act
+    analysis = combine(evidence)
+
+    # Assert
+    assert analysis.level != "low"
+    assert analysis.track == "pyramid"
 
 
 def test_warning_with_requisite_keeps_medium_cap_only() -> None:

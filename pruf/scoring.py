@@ -14,7 +14,8 @@
 6. Стоп-признаки (бесплатное участие, правила, антиреклама) вычитают баллы и
    опускают потолок до среднего. Предупреждение или новость о схеме действует на все
    треки; если при нём нет просьбы о деньгах, реквизита или ссылки, потолок — низкий риск,
-   а если есть — это маскировка: баллы не снимаются, потолок «средний».
+   а если есть — это маскировка: стоп-признаки баллы не снимают, потолок «средний».
+   Новостью пост считается по двум новостным маркерам, одно слово «приговор» рекламу не прячет.
    Признаки-действия под отрицанием («не переводите») и фразы в кавычках внутри
    предупреждения не считаются.
 7. Контекст (повтор пруфа в рискованных постах, правка пруфа, реквизит из рискованных
@@ -55,7 +56,7 @@ CONTACT_EVIDENCE = frozenset({"common.requisite", "common.kaspi_pay_link", "comm
 SOFT_CONTACT = frozenset({"common.dm_redirect", "casino.hidden_promo"})
 # Вспомогательные признаки сами трек не открывают: «3,5 млн» в сборе на операцию — не розыгрыш
 AUX_FEATURES = frozenset({"lottery.big_prize", "pyramid.closed_group", "pyramid.regular_payout"})
-MONEY_ASKS = frozenset({"common.kaspi_transfer", "common.card_phish"})  # просьба отдать деньги или данные карты
+MONEY_ASKS = frozenset({"common.kaspi_transfer", "common.card_phish", "common.paid_access"})  # просьба отдать деньги или данные карты
 STRONG_CONTEXT = 15.0  # сигнал реестра/графа такой силы учитывается даже без признаков в тексте
 
 
@@ -72,7 +73,8 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     own = _unique_by_feature(e for e in evidence if e.track == track)
     # Предупреждение или новость о схеме относится ко всем трекам: разбор пирамиды не делает пост розыгрышем
     warning = next((e for e in evidence if e.feature_id in SHARED_WARNINGS), None)
-    is_news = any(e.feature_id == NEWS_WARNING for e in evidence)
+    # одно слово «сотында» в рекламе пирамиды новостью её не делает: нужны два новостных маркера
+    is_news = sum(1 for e in evidence if e.feature_id == NEWS_WARNING) >= 2
     if warning and not any(f.endswith(AWARENESS_SUFFIX) for f in own):
         own[f"{track}{AWARENESS_SUFFIX}"] = warning
     common = _unique_by_feature(e for e in evidence if e.track == "common" and not e.stop)
@@ -83,7 +85,8 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     # «Осторожно, мошенники!» рядом с реквизитом или просьбой заплатить — маскировка, а не предупреждение:
     # баллы оно не снимает, остаётся только потолок «средний»
     disguise = has_transfer or has_contact
-    points = sum(e.weight for e in own.values() if not (disguise and e.feature_id.endswith(AWARENESS_SUFFIX)))
+    # и «Итоги тиража» рядом с реквизитом баллы тоже не снимают; потолок «средний» остаётся
+    points = sum(e.weight for e in own.values() if not (disguise and e.stop))
     if has_positive:
         points += sum(e.weight for e in common.values())
     rule_score = 100.0 * (1.0 - math.exp(-max(points, 0.0) / SATURATION))

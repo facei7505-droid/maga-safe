@@ -44,6 +44,9 @@ BLIND_HISTORY = (
     ("handwritten_blind_v4", "раунд 4, первый замер", "0,969", "0,775", "0,025"),
     ("handwritten_blind_v4", "раунд 4, после правила против маскировки «осторожно, мошенники» + реквизит", "0,954", "0,775", "0,037"),
     ("handwritten_blind_v4", "раунд 4, после исправлений ревью (уклонения через вопрос, кавычки, «не переживайте»)", "0,939", "0,775", "0,050"),
+    ("handwritten_blind_v5", "код до раунда 2, для сравнения", "0,848", "0,433", "0,078"),
+    ("handwritten_blind_v5", "код раунда 4, для сравнения", "0,909", "0,667", "0,067"),
+    ("handwritten_blind_v5", "раунд 5, первый замер (после ревью)", "0,917", "0,733", "0,067"),
 )
 
 
@@ -208,12 +211,12 @@ def main() -> None:
     ap.add_argument("--model", type=Path, default=Path("models/clf.joblib"))
     ap.add_argument("--mode", choices=["text", "full", "both"], default="both")
     ap.add_argument("--handwritten", type=Path, nargs="*",
-                    default=[Path("eval/handwritten.jsonl"), Path("eval/dev_round2.jsonl"), Path("eval/dev_round4.jsonl"),
+                    default=[Path("eval/handwritten.jsonl"), Path("eval/dev_round2.jsonl"), Path("eval/dev_round4.jsonl"), Path("eval/dev_round5.jsonl"),
                              Path("eval/handwritten_blind.jsonl"), Path("eval/handwritten_blind_v2.jsonl"),
-                             Path("eval/handwritten_blind_v3.jsonl")],
+                             Path("eval/handwritten_blind_v3.jsonl"), Path("eval/handwritten_blind_v4.jsonl")],
                     help="ручные dev-наборы, не из генератора: на них правила настраиваются")
     ap.add_argument("--blind", type=Path, nargs="*",
-                    default=[Path("eval/handwritten_blind_v4.jsonl")],
+                    default=[Path("eval/handwritten_blind_v5.jsonl")],
                     help="слепые наборы: написаны до правок агентом без доступа к коду, на них только измеряем")
     ap.add_argument("--report", type=Path, default=Path("reports/eval.json"))
     ap.add_argument("--markdown", type=Path, default=Path("docs/metrics.md"))
