@@ -26,6 +26,7 @@ os.environ.setdefault("PRUF_DEV_MODE", "1")
 
 from pruf.config import ROOT, Settings
 from pruf.detect.classifier import TrackClassifier
+from pruf.detect.training import training_rows
 from pruf.pipeline import Pruf, Submission, Upload
 from pruf.synth.generator import Generator
 from pruf.synth.screens import (
@@ -82,10 +83,9 @@ def ensure_model(settings: Settings, gen_seed: int = 42) -> TrackClassifier:
     clf = TrackClassifier.load(settings.model_path)
     if clf is not None:
         return clf
-    _log(f"модели нет, обучаю на синтетике → {settings.model_path}")
+    _log(f"модели нет, обучаю на синтетике и ручных dev-наборах → {settings.model_path}")
     posts = Generator(seed=gen_seed).dataset(image_rate=0.0)
-    train = [p for p in posts if p.split == "train"]
-    clf = TrackClassifier.train([p.text for p in train], [p.label for p in train])
+    clf = TrackClassifier.train(*training_rows((p.text, p.label) for p in posts if p.split == "train"))
     clf.save(settings.model_path)
     return clf
 

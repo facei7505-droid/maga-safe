@@ -27,6 +27,7 @@ from pruf.config import Settings
 from pruf.detect.classifier import TrackClassifier
 from pruf.detect.detector import Detector, SourceText
 from pruf.detect.lexicon import TRACKS
+from pruf.detect.training import dev_paths
 from pruf.synth.generator import SynthPost, read_jsonl
 
 LEVELS_POS = {"medium": ("medium", "high"), "high": ("high",)}
@@ -47,6 +48,9 @@ BLIND_HISTORY = (
     ("handwritten_blind_v5", "код до раунда 2, для сравнения", "0,848", "0,433", "0,078"),
     ("handwritten_blind_v5", "код раунда 4, для сравнения", "0,909", "0,667", "0,067"),
     ("handwritten_blind_v5", "раунд 5, первый замер (после ревью)", "0,917", "0,733", "0,067"),
+    ("handwritten_blind_v6", "код до раунда 2, для сравнения", "0,840", "0,420", "0,080"),
+    ("handwritten_blind_v6", "код раунда 5, для сравнения", "0,907", "0,680", "0,070"),
+    ("handwritten_blind_v6", "раунд 6, первый замер (ML на ручной разметке + новые шаблоны)", "0,903", "0,840", "0,090"),
 )
 
 
@@ -211,12 +215,10 @@ def main() -> None:
     ap.add_argument("--model", type=Path, default=Path("models/clf.joblib"))
     ap.add_argument("--mode", choices=["text", "full", "both"], default="both")
     ap.add_argument("--handwritten", type=Path, nargs="*",
-                    default=[Path("eval/handwritten.jsonl"), Path("eval/dev_round2.jsonl"), Path("eval/dev_round4.jsonl"), Path("eval/dev_round5.jsonl"),
-                             Path("eval/handwritten_blind.jsonl"), Path("eval/handwritten_blind_v2.jsonl"),
-                             Path("eval/handwritten_blind_v3.jsonl"), Path("eval/handwritten_blind_v4.jsonl")],
+                    default=dev_paths(),
                     help="ручные dev-наборы, не из генератора: на них правила настраиваются")
     ap.add_argument("--blind", type=Path, nargs="*",
-                    default=[Path("eval/handwritten_blind_v5.jsonl")],
+                    default=[Path("eval/handwritten_blind_v6.jsonl")],
                     help="слепые наборы: написаны до правок агентом без доступа к коду, на них только измеряем")
     ap.add_argument("--report", type=Path, default=Path("reports/eval.json"))
     ap.add_argument("--markdown", type=Path, default=Path("docs/metrics.md"))

@@ -57,6 +57,9 @@ SOFT_CONTACT = frozenset({"common.dm_redirect", "casino.hidden_promo"})
 # Вспомогательные признаки сами трек не открывают: «3,5 млн» в сборе на операцию — не розыгрыш
 AUX_FEATURES = frozenset({"lottery.big_prize", "pyramid.closed_group", "pyramid.regular_payout"})
 MONEY_ASKS = frozenset({"common.kaspi_transfer", "common.card_phish", "common.paid_access"})  # просьба отдать деньги или данные карты
+# Модель уверена в треке: вместе с одним признаком в тексте это уже сочетание сигналов, а не «один признак»
+ML_CONFIRM = 0.5
+DENIAL = "common.denial"  # «бұл scam емес», «мы работаем честно»: предупреждение рядом с этим — маскировка
 STRONG_CONTEXT = 15.0  # сигнал реестра/графа такой силы учитывается даже без признаков в тексте
 
 
@@ -82,11 +85,15 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     has_transfer = bool(MONEY_ASKS & common.keys())
     contacts = CONTACT_EVIDENCE if is_news else CONTACT_EVIDENCE | SOFT_CONTACT
     has_contact = bool(contacts & (common.keys() | own.keys()))
+    hard_contact = bool(CONTACT_EVIDENCE & (common.keys() | own.keys()))
     # «Осторожно, мошенники!» рядом с реквизитом или просьбой заплатить — маскировка, а не предупреждение:
     # баллы оно не снимает, остаётся только потолок «средний»
-    disguise = has_transfer or has_contact
-    # и «Итоги тиража» рядом с реквизитом баллы тоже не снимают; потолок «средний» остаётся
-    points = sum(e.weight for e in own.values() if not (disguise and e.stop))
+    disguise = has_transfer or has_contact or DENIAL in common
+    # «Итоги тиража» рядом с реквизитом или просьбой заплатить баллы тоже не снимают; потолок «средний» остаётся.
+    # «Запись в лс» у турнира — не маскировка: мягкий призыв снимает только скидку предупреждения.
+    unmasked = has_transfer or hard_contact
+    points = sum(e.weight for e in own.values()
+                 if not e.stop or not (unmasked or (disguise and e.feature_id.endswith(AWARENESS_SUFFIX))))
     if has_positive:
         points += sum(e.weight for e in common.values())
     rule_score = 100.0 * (1.0 - math.exp(-max(points, 0.0) / SATURATION))
@@ -109,7 +116,9 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     positives = [e for e in own.values() if e.weight > 0]
     if not has_positive and track_context and score > CONTEXT_ONLY_CAP:
         score, capped = CONTEXT_ONLY_CAP, "собственных признаков нет, только связь с рискованными постами"
-    if len(positives) == 1 and not has_transfer and not track_context and score > SINGLE_CAP:
+    ml_confirms = p_track is not None and p_track >= ML_CONFIRM
+    # признак схемы + реквизит или просьба заплатить — уже сочетание: куда переводить, тоже сигнал
+    if len(positives) == 1 and not unmasked and not track_context and not ml_confirms and score > SINGLE_CAP:
         score, capped = SINGLE_CAP, "найден только один признак, нужен хотя бы ещё один"
     core_count = sum(1 for e in own.values() if e.core)
     if score >= HIGH_THRESHOLD and not (core_count >= 2 or (core_count >= 1 and (has_transfer or track_context))):

@@ -36,6 +36,7 @@ _TRANSLIT_SINGLE = {
 KK_TO_RU = str.maketrans({"ұ": "у", "ү": "у", "қ": "к", "ң": "н", "ғ": "г", "ә": "а", "ө": "о", "һ": "х", "і": "и"})
 # Категории, которые выбрасываются из свёрнутого текста: невидимые символы и одиночные диакритики
 _DROP_CATEGORIES = ("Cf", "Mn")
+_SYMBOL_CATEGORIES = frozenset({"So", "Sk", "Cs"})
 _VOWELS_LAT = set("aeiouy")
 # «к а з и н о», «п.и.р.а.м.и.д.а»: четыре и больше одиночных букв через один разделитель склеиваем в слово
 _SPACED_RE = re.compile(r"(?<!\w)[^\W\d_](?:[ .\-*·_][^\W\d_]){3,}(?!\w)")
@@ -155,6 +156,22 @@ def _fold_token(token: str, base: int) -> list[tuple[str, int, int]]:
     return [(ch.lower(), base + i, base + i + 1) for i, ch in enumerate(token)]
 
 
+def _drop_symbols_inside_words(chars: list[tuple[str, int, int]]) -> list[tuple[str, int, int]]:
+    """«Ка🎰зи🎰но» → «казино»: эмодзи и значки между двумя буквами разрывают слово."""
+    out: list[tuple[str, int, int]] = []
+    i = 0
+    while i < len(chars):
+        j = i
+        while j < len(chars) and unicodedata.category(chars[j][0]) in _SYMBOL_CATEGORIES:
+            j += 1
+        if j > i and out and out[-1][0].isalpha() and j < len(chars) and chars[j][0].isalpha():
+            i = j
+            continue
+        out.extend(chars[i:max(j, i + 1)])
+        i = max(j, i + 1)
+    return out
+
+
 def _is_word_gap(chars: list[tuple[str, int, int]], i: int) -> bool:
     """Широкий пробел между «р а з р я д к а м и», где соседние промежутки узкие."""
     c, s, e = chars[i]
@@ -192,7 +209,7 @@ def normalize_text(raw: str) -> NormText:
     # lower() может вернуть несколько символов: раскладываем по одному с тем же диапазоном.
     folded_chars = [("е" if c == "ё" else c.translate(KK_TO_RU), s, e)
                     for chunk, s, e in chars for c in chunk if unicodedata.category(c) not in _DROP_CATEGORIES]
-    folded_chars = _join_spaced_letters(folded_chars)
+    folded_chars = _join_spaced_letters(_drop_symbols_inside_words(folded_chars))
     folded = "".join(c for c, _, _ in folded_chars)
     spans = tuple((s, e) for _, s, e in folded_chars)
     return NormText(original=original, folded=folded, spans=spans)
