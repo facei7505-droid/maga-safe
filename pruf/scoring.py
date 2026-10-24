@@ -55,7 +55,9 @@ CONTEXT_ONLY_CAP = HIGH_THRESHOLD - 1
 NO_COMBO_CAP = HIGH_THRESHOLD - 1
 AWARENESS_SUFFIX = ".awareness"
 NEWS_WARNING = "common.news.awareness"
-SHARED_WARNINGS = frozenset({"common.awareness", NEWS_WARNING, "common.question.awareness"})  # на все треки; «рейд», «подпольн» — только казино
+QUESTION_WARNING = "common.question.awareness"
+QUESTION_FINAL = "common.question_final"
+SHARED_WARNINGS = frozenset({"common.awareness", NEWS_WARNING, QUESTION_WARNING})  # на все треки; «рейд», «подпольн» — только казино
 # Реквизит или ссылка: у настоящей рекламы схемы есть куда платить или переходить, у новости и предупреждения обычно нет
 CONTACT_EVIDENCE = frozenset({"common.requisite", "common.kaspi_pay_link", "common.shortener", "common.brand_lookalike", "casino.domain"})
 # «Пиши в лс», «ссылка в шапке» — призыв к действию в рекламе, но в новости это описание схемы
@@ -89,6 +91,8 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     warning = next((e for e in evidence if e.feature_id in SHARED_WARNINGS), None)
     # одно слово «сотында» в рекламе пирамиды новостью её не делает: нужны два новостных маркера
     is_news = sum(1 for e in evidence if e.feature_id == NEWS_WARNING) >= 2
+    # «друг зовёт: вход 50 000, 15 000 в месяц, бонус за друга. Это пирамида?» — вопрос в конце пересказывает всё предложение
+    is_question = any(e.feature_id == QUESTION_FINAL for e in evidence)
     if warning and not any(f.endswith(AWARENESS_SUFFIX) for f in own):
         own[f"{track}{AWARENESS_SUFFIX}"] = warning
     common = _unique_by_feature(e for e in evidence if e.track == "common" and not e.stop)
@@ -144,7 +148,7 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     core_count = sum(1 for e in own.values() if e.core)
     if score >= HIGH_THRESHOLD and not (core_count >= 2 or (core_count >= 1 and (has_transfer or track_context))):
         score, capped = NO_COMBO_CAP, "нет обязательного сочетания признаков для высокого риска"
-    if warning and not disguise and (is_news or core_count < 2) and score > SINGLE_CAP:
+    if warning and not disguise and (is_news or is_question or core_count < 2) and score > SINGLE_CAP:
         score, capped = SINGLE_CAP, "похоже на предупреждение или новость о схеме"
     elif (any(e.feature_id == LLM_LEGIT for e in evidence) and score > SINGLE_CAP
           and not (has_transfer or has_contact or hard_contact or ml_confirms or track_context)):

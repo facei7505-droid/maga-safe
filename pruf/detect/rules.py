@@ -7,7 +7,7 @@ from functools import lru_cache
 
 from pruf.detect.lexicon import FEATURES, Feature
 from pruf.models import Evidence
-from pruf.normalize.text import NormText
+from pruf.normalize.text import KK_TO_RU, NormText
 
 QUOTE_CONTEXT = 25
 MAX_QUOTES_PER_FEATURE = 2
@@ -32,25 +32,31 @@ _NEGATED_VERB_RE = re.compile(
 # Отрицание управляет признаком, только если между ними не больше NEGATION_GAP_WORDS слов и нет утвердительной просьбы:
 # «ничего не платите за сам телефон, только оплатите доставку» — просьба остаётся
 NEGATION_GAP_WORDS = 3
-_AFFIRMATIVE_ASK_RE = re.compile(r"(?<!не )(?<!\w)(?:оплатите|переведите|внесите|отправьте|скиньте|киньте|аударыңыз|төлеңіз)(?!\w)")
+# текст свёрнут (KK_TO_RU), поэтому казахские буквы в шаблонах сворачиваются так же
+_AFFIRMATIVE_ASK_RE = re.compile(r"(?<!не )(?<!\w)(?:оплатите|переведите|внесите|отправьте|скиньте|киньте|аударыңыз|төлеңіз)(?!\w)".translate(KK_TO_RU))
 # «если вам в директ пишут…» — пересказ чужого сообщения, а не призыв автора
 _REPORTED_RE = re.compile(
     # нужен глагол пересказа: голое «если вам интересно — вход от 20к» пересказом не считается
     r"(?<!\w)(?:вам|тебе)\s+(?:\w+\s+){0,2}?(?:пишут|написал\w*|предлагают|присылают|звонят)(?!\w)"
     r"|(?<!\w)(?:если|когда)\s+(?:\w+\s+){0,3}?(?:пишут|предлагают|присылают|обещают|зовут)(?!\w)"
     # «Блогеры, которые … дают ссылку в шапке»: описание чужой схемы, а не призыв
-    r"|(?<!\w)(?:блогер|стример|мошенник|аферист|алаяқ)\w*,?\s+(?:котор|кто)")
+    r"|(?<!\w)(?:блогер|стример|мошенник|аферист|алаяқ)\w*,?\s+(?:котор|кто)"
+    # казахская косвенная речь: «салық төлеңіз деп келді»
+    r"|\w\s+деп\s+(?:\w+\s+){0,2}?(?:келди|жазды|жазып|айтты|айтып|хабарла|жиберди|звон|сурап|сурады|деди|дейди)"
+    r"|(?:смс|хабарлама|сообщени|звон|конырау)\w*[^.!?]{0,80}?\w\s+деп(?!\w)(?!\s*\d)".translate(KK_TO_RU))
 # пересказ не переходит через конец предложения, двоеточие или тире: «…, уже на плюсе: ссылка в шапке» — уже призыв
 _REPORTED_SPLIT_RE = re.compile(r"[.!?;:\n—–]")
 _NEGATION_SPLIT_RE = re.compile(r"[,.!?;:\n—–]|\s-\s")
 REPORTABLE = NEGATABLE | {"common.dm_redirect", "casino.hidden_promo"}
+# «банктер карта деректерін сұрамайды»: казахское отрицание в утвердительной форме глагола
+_KK_NEG_DECL_RE = re.compile(r"\w*\s+(?:\w+\s+)?(?:сурамайды|сурамаймыз|талап етпейди|талап етпеиди)(?!\w)")
 _KK_NEG_IMPERATIVE_RE = re.compile(r"\w(?:ма|ме|ба|бе|па|пе)(?:ныз|низ|ндар)(?!\w)")
 # «данные карты никому не сообщайте»: запрет стоит сразу после дополнения
 # «никому не говорите» — требование тайны, а не предупреждение, поэтому «говор» сюда не входит
 _RU_NEG_AFTER_RE = re.compile(r"\w*\s+(?:никому\s+|никогда\s+)?(?:не|нельзя)\s+(?:сообща|называ|передава|диктуй|вводи|отправля|сообщ|пересыла)\w*")
 # просьба автора раньше в посте: «введите данные карты. Код никому не сообщайте» — подражание банку
 _DATA_ASK_BEFORE_RE = re.compile(r"(?<!не )(?<!\w)(?:введите|укажите|отправьте|пришлите|продиктуйте|скиньте|напишите|заполните|переведите|оплатите"
-                                 r"|енгізіңіз|жіберіңіз|жазыңыз|толтырыңыз)(?!\w)")
+                                 r"|енгізіңіз|жіберіңіз|жазыңыз|толтырыңыз)(?!\w)".translate(KK_TO_RU))
 _QUOTED_RE = re.compile(r"«[^»\n]{1,300}»|“[^”\n]{1,300}”|„[^“\n]{1,300}“|\"[^\"\n]{1,300}\"|(?<!\w)'[^'\n]{1,300}'(?!\w)")
 
 
@@ -116,7 +122,8 @@ def _negated(folded: str, start: int, end: int) -> bool:
         if len(gap.split()) <= NEGATION_GAP_WORDS and not _AFFIRMATIVE_ASK_RE.search(gap + folded[start:end]):
             return True
     # казахское отрицание стоит в глаголе после дополнения: «деректерін енгізбеңіз», «каспиге аудармаңыз»
-    if _RU_NEG_AFTER_RE.match(folded[end:end + NEGATION_WINDOW]) and not _DATA_ASK_BEFORE_RE.search(folded[:start]):
+    if (_RU_NEG_AFTER_RE.match(folded[end:end + NEGATION_WINDOW]) or _KK_NEG_DECL_RE.match(folded[end:end + NEGATION_WINDOW])) \
+            and not _DATA_ASK_BEFORE_RE.search(folded[:start]):
         return True
     tail = re.match(r"\w*(?:\s+\w+){0,2}", folded[end:])
     return bool(_KK_NEG_IMPERATIVE_RE.search(folded[max(0, start - NEGATION_WINDOW):end + tail.end()]))

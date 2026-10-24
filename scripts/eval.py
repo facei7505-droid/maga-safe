@@ -73,6 +73,9 @@ BLIND_HISTORY = (
     ("handwritten_blind_v11", "код раунда 9 со своей моделью, для сравнения", "0,942", "0,810", "0,050"),
     ("handwritten_blind_v11", "раунд 10, первый замер: правила + ML", "0,944", "0,850", "0,050"),
     ("handwritten_blind_v11", "раунд 10, только правила", "0,921", "0,580", "0,050"),
+    ("handwritten_blind_v12", "код раунда 10, для сравнения", "0,863", "0,880", "0,140"),
+    ("handwritten_blind_v12", "раунд 11, первый замер: правила + ML", "0,880", "0,880", "0,120"),
+    ("handwritten_blind_v12", "раунд 11, только правила", "0,836", "0,610", "0,120"),
 )
 
 
@@ -222,7 +225,10 @@ def to_markdown(report: dict) -> str:
         if mode.startswith("blind:"):
             o = variants["rules+ml"]["medium"]["overall"]
             ci = (wilson(o["tp"], o["tp"] + o["fp"]), wilson(o["tp"], o["tp"] + o["fn"]), wilson(o["fp"], o["fp"] + o["tn"]))
-            lines.append(f"| {mode[6:]} | сейчас | {o['precision']} ({ci[0][0]}–{ci[0][1]}) | {o['recall']} ({ci[1][0]}–{ci[1][1]}) "
+            # набор, уже ушедший в обучение и настройку, меряет только «не сломали ли»: цифра на нём завышена
+            spent = any(path.stem == mode[6:] for path in dev_paths())
+            when = "сейчас (набор уже в dev, цифра завышена)" if spent else "сейчас"
+            lines.append(f"| {mode[6:]} | {when} | {o['precision']} ({ci[0][0]}–{ci[0][1]}) | {o['recall']} ({ci[1][0]}–{ci[1][1]}) "
                          f"| {o['fpr']} ({ci[2][0]}–{ci[2][1]}) |")
     lines += ["", "В скобках 95% интервал Уилсона.", ""]
     lines.append("")
@@ -240,7 +246,7 @@ def main() -> None:
                     default=dev_paths(),
                     help="ручные dev-наборы, не из генератора: на них правила настраиваются")
     ap.add_argument("--blind", type=Path, nargs="*",
-                    default=[Path("eval/handwritten_blind_v11.jsonl")],
+                    default=[Path("eval/handwritten_blind_v12.jsonl")],
                     help="слепые наборы: написаны до правок агентом без доступа к коду, на них только измеряем")
     ap.add_argument("--report", type=Path, default=Path("reports/eval.json"))
     ap.add_argument("--markdown", type=Path, default=Path("docs/metrics.md"))
