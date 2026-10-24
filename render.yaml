@@ -1,0 +1,22 @@
+# Render Blueprint: New → Blueprint → этот репозиторий. Токены генерирует Render, ключ Claude вводится вручную.
+# Бесплатный план без диска: демо-данные создаются заново при каждом запуске (3–5 минут после старта).
+services:
+  - type: web
+    name: pruf
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PRUF_ANALYST_TOKEN
+        generateValue: true
+      - key: PRUF_HMAC_KEY
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PRUF_LLM_MODEL
+        value: claude-sonnet-5-5
+      - key: PRUF_LLM_DAILY_BUDGET
+        value: "300"
+      - key: PRUF_RATE_LIMIT
+        value: "120"
