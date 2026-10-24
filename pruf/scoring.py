@@ -60,6 +60,7 @@ MONEY_ASKS = frozenset({"common.kaspi_transfer", "common.card_phish", "common.pa
 # Модель уверена в треке: вместе с одним признаком в тексте это уже сочетание сигналов, а не «один признак»
 ML_CONFIRM = 0.5
 DENIAL = "common.denial"  # «бұл scam емес», «мы работаем честно»: предупреждение рядом с этим — маскировка
+LLM_LEGIT = "llm.legit"  # LLM: пост целиком похож на легальный, своих признаков схемы не нашла
 STRONG_CONTEXT = 15.0  # сигнал реестра/графа такой силы учитывается даже без признаков в тексте
 
 
@@ -125,6 +126,9 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
         score, capped = NO_COMBO_CAP, "нет обязательного сочетания признаков для высокого риска"
     if warning and not disguise and (is_news or core_count < 2) and score > SINGLE_CAP:
         score, capped = SINGLE_CAP, "похоже на предупреждение или новость о схеме"
+    elif any(e.feature_id == LLM_LEGIT for e in evidence) and not hard_contact and score > SINGLE_CAP:
+        # текст недоверенный: при реквизите или ссылке «это легально» от LLM балл не снижает
+        score, capped = SINGLE_CAP, "LLM считает контекст легальным, реквизитов и ссылок нет"
     elif any(e.stop for e in own.values()) and score > STOP_CAP:
         score, capped = STOP_CAP, "есть признаки легальности"
     score = max(0.0, min(100.0, score))

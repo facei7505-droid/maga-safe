@@ -12,7 +12,7 @@ from pruf.config import Settings
 from pruf.detect.classifier import TrackClassifier
 from pruf.detect.llm import LlmArbiter
 from pruf.detect.rules import find_features
-from pruf.models import HIGH_THRESHOLD, MEDIUM_THRESHOLD, Analysis, Evidence
+from pruf.models import HIGH_THRESHOLD, Analysis, Evidence
 from pruf.normalize.links import (
     ALLOWLIST_DOMAINS,
     MAX_RESOLVE_PER_POST,
@@ -22,8 +22,11 @@ from pruf.normalize.links import (
 )
 from pruf.normalize.requisites import Requisite, extract_requisites, redact_cards
 from pruf.normalize.text import normalize_text
-from pruf.scoring import combine
+from pruf.scoring import LLM_LEGIT, combine
 
+# Спорная зона для LLM: от «один признак упёрся в потолок» (20–34) до нижней части высокого риска (65–74),
+# где чаще всего ложные срабатывания на легальных сборах и платных мероприятиях
+LLM_ZONE = (20.0, HIGH_THRESHOLD + 10.0)
 log = logging.getLogger(__name__)
 # Только по имени хоста, не по пути: «gov.kz/news/kazino-zapret» не казино. «bet» только целой меткой
 # (bet.kz, jet-casino.bet, bet-777.top), иначе ловятся alphabet.com и tibet.kz.
@@ -143,7 +146,7 @@ class Detector:
         llm_status = "off" if self._llm is None else "not_needed"
         analysis = combine(evidence, ml, context, req_dicts, link_dicts, llm_status=llm_status)
 
-        if allow_llm and self._llm and MEDIUM_THRESHOLD <= analysis.score < HIGH_THRESHOLD:
+        if allow_llm and self._llm and LLM_ZONE[0] <= analysis.score < LLM_ZONE[1]:
             full_text = "\n".join(redact_cards(s.text) or "" for s in sources if s.text)
             verdict = self._llm.review(full_text)
             extra: list[Evidence] = []
@@ -153,8 +156,7 @@ class Detector:
                 llm_status = "ok"
                 extra = list(verdict.evidence)
                 if verdict.legit_context and not verdict.evidence:
-                    # Только пометка для аналитика: текст поста недоверенный, поэтому
-                    # мнение LLM «это легально» само по себе балл не снижает.
-                    extra.append(Evidence("llm.legit", "common", "LLM: контекст похож на легальный", 0, "llm"))
+                    # Вето ограничено в scoring.py: при реквизите или ссылке мнение LLM балл не снижает
+                    extra.append(Evidence(LLM_LEGIT, "common", "LLM: контекст похож на легальный", 0, "llm"))
             analysis = combine(evidence + extra, ml, context, req_dicts, link_dicts, llm_status=llm_status)
         return Detection(analysis=analysis, requisites=tuple(requisites), links=tuple(links), folded=folded)
