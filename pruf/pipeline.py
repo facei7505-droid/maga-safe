@@ -82,12 +82,20 @@ class Pruf:
         self.settings = settings
         self.db = Database(settings.db_path)
         self.blobs = BlobStore(settings.blob_dir)
-        self.registry = ProofRegistry(self.db, self.blobs, ocr_enabled=ocr_enabled)
+        self.registry = ProofRegistry(self.db, self.blobs, ocr_enabled=ocr_enabled and settings.ocr_enabled)
         self.detector = detector or Detector(settings)
         self.version = 0  # растёт при каждом приёме, по нему сбрасывается кэш графа
         # Один писатель: реестр (поиск → запись → добавление в индекс) и счётчик версии должны
         # обновляться атомарно, иначе две одновременные копии одного пруфа не найдут друг друга.
         self._ingest_lock = threading.Lock()
+
+    def _ocr_degraded(self, got: _Collected) -> list[dict[str, str]]:
+        if got.images and not self.settings.ocr_enabled:
+            return [{"component": "ocr", "reason": "Распознавание скриншотов выключено на этом сервере: суммы на скрине не прочитаны, "
+                                                   "совпадения по картинке ищутся"}]
+        if any(not r.ocr_ok for r in got.images):
+            return [{"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"}]
+        return []
 
     # ---------- контекст из реестра и графа ----------
     def _proof_context(self, got: _Collected) -> list[Evidence]:
@@ -193,8 +201,7 @@ class Pruf:
                 if _links_cases(link):
                     self.db.add_link(post_id, link.url, link.domain, link.resolved)
             context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
-        if any(not r.ocr_ok for r in got.images):
-            degraded.append({"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"})
+        degraded.extend(self._ocr_degraded(got))
         analysis = self.detector.detect(sources, context).analysis  # может звать LLM: вне блокировки
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
@@ -230,8 +237,7 @@ class Pruf:
         decoded = [(data, open_image(data)) for data in images]
         got = _Collected(images=[self.registry.lookup_image(data, img) for data, img in decoded])
         degraded = []
-        if any(not r.ocr_ok for r in got.images):
-            degraded.append({"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"})
+        degraded.extend(self._ocr_degraded(got))
         ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or ""
         sources = [SourceText("text", text or ""), SourceText("ocr", ocr_text), SourceText("voice", transcript or "")]
         first = self.detector.detect(sources, allow_llm=False)

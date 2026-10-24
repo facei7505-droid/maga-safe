@@ -104,6 +104,7 @@ docker run -p 8000:8000 -e PRUF_ANALYST_TOKEN=demo:$(openssl rand -hex 16) \
 | `PRUF_LLM_DAILY_BUDGET` | максимум вызовов Claude в сутки (по умолчанию 5000; для демо хватает 300) |
 | `TELEGRAM_BOT_TOKEN`, `PRUF_TELEGRAM_SECRET` | бот: токен и секрет вебхука |
 | `PRUF_RESOLVE_LINKS=1` | раскрывать сокращённые ссылки (с защитой от внутренних адресов) |
+| `PRUF_OCR=0` | выключить OCR скриншотов (хостинг с 512 МБ: OCR поднимает память до 540–660 МБ); сравнение картинок остаётся |
 | `PRUF_MAX_UPLOAD_BYTES`, `PRUF_RATE_LIMIT` | лимит файла (8 МБ) и запросов в минуту (120) |
 
 ## API

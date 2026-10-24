@@ -29,6 +29,8 @@ class Settings:
     telegram_token: str = field(default_factory=lambda: os.environ.get("TELEGRAM_BOT_TOKEN", ""))
     telegram_secret: str = field(default_factory=lambda: os.environ.get("PRUF_TELEGRAM_SECRET", ""))
     resolve_links: bool = field(default_factory=lambda: os.environ.get("PRUF_RESOLVE_LINKS", "") == "1")
+    # PRUF_OCR=0 на хостинге с 512 МБ: модели OCR поднимают память сервера до 540–660 МБ
+    ocr_enabled: bool = field(default_factory=lambda: os.environ.get("PRUF_OCR", "1") != "0")
     max_upload_bytes: int = field(default_factory=lambda: int(os.environ.get("PRUF_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024))))
     rate_limit_per_minute: int = field(default_factory=lambda: int(os.environ.get("PRUF_RATE_LIMIT", "120")))
 

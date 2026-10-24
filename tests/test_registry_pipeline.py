@@ -467,3 +467,31 @@ def test_ingest_increments_version(pruf: Pruf) -> None:
 
     # Assert
     assert pruf.version == 2
+
+
+def test_ocr_switched_off_by_settings_skips_ocr_and_says_so(tmp_path: Path, original_jpeg: bytes, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: PRUF_OCR=0 на хостинге с 512 МБ, модель OCR не должна даже загружаться
+    def must_not_run(_img):
+        raise AssertionError("OCR вызван при PRUF_OCR=0")
+
+    monkeypatch.setattr(registry_mod, "run_ocr", must_not_run)
+    p = Pruf(make_settings(tmp_path, ocr_enabled=False))
+
+    # Act
+    result = _ingest(p, "Скрин выплаты", images=(original_jpeg,))
+    p.db.close()
+
+    # Assert
+    degraded = result["analysis"]["degraded"]
+    assert [d["component"] for d in degraded] == ["ocr"]
+    assert "выключено" in degraded[0]["reason"]
+
+
+def test_ocr_setting_reads_pruf_ocr_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange / Act / Assert
+    from pruf.config import Settings
+
+    monkeypatch.setenv("PRUF_OCR", "0")
+    assert Settings().ocr_enabled is False
+    monkeypatch.delenv("PRUF_OCR")
+    assert Settings().ocr_enabled is True
