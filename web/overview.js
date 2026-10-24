@@ -42,7 +42,7 @@ function kpis(s, o) {
 function surgesBlock(surges, openCase) {
   if (!surges.length) return el("p", { class: "muted" }, "Ранних сигналов нет: ни один реквизит не разошёлся по 3+ каналам за 72 часа.");
   return el("section", { class: "surges" },
-    el("h3", {}, "⚡ Ранние сигналы: реквизит быстро расходится по каналам"),
+    el("h3", {}, "Ранние сигналы: реквизит быстро расходится по каналам"),
     surges.map((sg) => el("div", { class: "surge" },
       el("div", { class: "surge-main" },
         el("span", { class: "req-type" }, REQ_TYPE[sg.type] || sg.type), " ", el("b", {}, sg.requisite),
