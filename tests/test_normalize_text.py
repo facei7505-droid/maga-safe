@@ -72,16 +72,36 @@ def test_leet_is_not_applied_to_amounts_and_numbers() -> None:
     assert folded == "5000тг 300 2026"
 
 
-def test_kazakh_cyrillic_letters_are_preserved_and_lowercased() -> None:
-    assert normalize_text("Ұтыс ойыны! Қатысу тегін, Жеңімпаз").folded == "ұтыс ойыны! қатысу тегін, жеңімпаз"
+def test_kazakh_letters_fold_to_russian_base_like_russian_keyboard_typing() -> None:
+    # Казахский на русской раскладке («Утыс», «Катысу») и с казахскими буквами сворачивается одинаково
+    assert normalize_text("Ұтыс ойыны! Қатысу тегін, Жеңімпаз").folded == "утыс ойыны! катысу тегин, женимпаз"
+    assert normalize_text("Утыс ойыны! Катысу тегин, Женимпаз").folded == "утыс ойыны! катысу тегин, женимпаз"
+
+
+def test_dotted_capital_i_does_not_crash_and_keeps_positions() -> None:
+    # Arrange: «İ».lower() даёт два символа; раньше это роняло разбор кириллического слова
+    text = "ҰТЫС! КАЗİНО www.İnfo.kz"
+
+    # Act
+    norm = normalize_text(text)
+
+    # Assert
+    assert norm.folded == "утыс! казино www.info.kz"
+    start = norm.folded.index("казино")
+    assert norm.original[slice(*norm.original_span(start, start + 6))] == "КАЗİНО"
+
+
+def test_combining_marks_used_as_obfuscation_are_dropped() -> None:
+    assert normalize_text("к̴а̴з̴и̴н̴о").folded == "казино"
 
 
 def test_kazakh_latin_2021_letters_map_to_kazakh_cyrillic() -> None:
     # Act
-    folded = normalize_text("Qatysu 1000 teńge, ǵ ú ü ó á ı").folded
+    folded = normalize_text("Qatysu 1000 teńge, ǵ, ú, ü, ó, á, ı, ū").folded
 
     # Assert
-    assert folded == "қатысу 1000 теңге, ғ ұ ү ө ә ы"
+    # казахские буквы затем сводятся к русской основе (см. KK_TO_RU)
+    assert folded == "катысу 1000 тенге, г, у, у, о, а, ы, у"
 
 
 def test_yo_is_folded_to_ye() -> None:
@@ -175,3 +195,17 @@ def test_invisible_characters_do_not_break_words(invisible: str) -> None:
 
     # Assert
     assert "розыгрыш" in folded
+
+
+def test_spaced_out_letters_are_joined_and_quoted_from_original() -> None:
+    # Arrange
+    text = normalize_text("к а з и н о без вериф, П.И.Р.А.М.И.Д.А")
+
+    # Act / Assert
+    assert text.folded == "казино без вериф, пирамида"
+    assert text.quote(0, 6) == "к а з и н о"
+
+
+def test_short_letter_runs_and_abbreviations_are_not_joined() -> None:
+    assert normalize_text("т.е. и т.д., я и ты").folded == "т.е. и т.д., я и ты"
+    assert normalize_text("с 5к а и б").folded == "с 5к а и б"

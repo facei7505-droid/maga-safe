@@ -4,58 +4,109 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ПРУФ · аналитик</title>
-  <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23e5484d'/%3E%3Cpath d='M10 24V8h7.5a5.5 5.5 0 0 1 0 11H14v5z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
 <header class="top">
-  <div class="brand">ПРУФ <span>признаки схем и повторные «пруфы»</span></div>
-  <nav>
-    <button class="tab active" data-view="queue">Очередь кейсов</button>
-    <button class="tab" data-view="check">Проверить</button>
-    <button class="tab" data-view="bank">Реквизиты</button>
-  </nav>
-  <div class="auth">
-    <input id="token" type="password" placeholder="Токен аналитика" autocomplete="off">
+  <div class="top-inner">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">П</span>
+      <span class="brand-text"><b>ПРУФ</b><span class="sub">признаки схем и повторные «пруфы»</span></span>
+    </div>
+    <nav class="tabs" aria-label="Разделы">
+      <button class="tab active" data-view="overview">Обзор</button>
+      <button class="tab" data-view="queue">Очередь кейсов</button>
+      <button class="tab" data-view="check">Проверить</button>
+      <button class="tab" data-view="bank">Реквизиты</button>
+    </nav>
+    <div class="auth">
+      <input id="token" type="password" placeholder="Токен аналитика" autocomplete="off" aria-label="Токен аналитика">
+    </div>
   </div>
 </header>
 <div id="degraded" class="banner hidden"></div>
-<div id="stats" class="stats"></div>
 
 <main>
-  <section id="view-queue" class="view">
+  <div id="stats" class="stats"></div>
+
+  <section id="view-overview" class="view">
+    <div class="page-head">
+      <h1>Обзор</h1>
+      <p>Поток постов, ранние сигналы и каналы, через которые расходятся схемы.</p>
+    </div>
+    <div id="overview" class="overview"></div>
+  </section>
+
+  <section id="view-queue" class="view hidden">
     <aside class="queue">
-      <div class="filters">
-        <select id="f-level"><option value="">Любой риск</option><option value="high">Высокий</option><option value="medium">Средний</option></select>
-        <select id="f-track"><option value="">Все треки</option><option value="lottery">Розыгрыши</option><option value="casino">Казино</option><option value="pyramid">Пирамиды</option></select>
-        <select id="f-status"><option value="">Любой статус</option><option value="new">Новые</option><option value="in_review">В работе</option><option value="confirmed">Подтверждены</option><option value="dismissed">Отклонены</option></select>
+      <div class="queue-tools">
+        <input id="f-search" type="search" placeholder="Поиск: кейс, канал, номер, домен" aria-label="Поиск по кейсам">
+        <div class="filters">
+          <select id="f-level" aria-label="Риск"><option value="">Любой риск</option><option value="high">Высокий</option><option value="medium">Средний</option></select>
+          <select id="f-track" aria-label="Трек"><option value="">Все треки</option><option value="lottery">Розыгрыши</option><option value="casino">Казино</option><option value="pyramid">Пирамиды</option></select>
+          <select id="f-status" aria-label="Статус"><option value="">Любой статус</option><option value="new">Новые</option><option value="in_review">В работе</option><option value="confirmed">Подтверждены</option><option value="dismissed">Отклонены</option></select>
+        </div>
+        <div id="cases-total" class="muted small"></div>
       </div>
-      <div id="cases-total" class="muted"></div>
       <ol id="cases" class="case-list"></ol>
+      <p class="muted small keys"><kbd>j</kbd> <kbd>k</kbd> следующий / предыдущий · <kbd>/</kbd> поиск · <kbd>Esc</kbd> закрыть</p>
     </aside>
-    <article id="case" class="case-card"><p class="muted">Выберите кейс в очереди слева.</p></article>
+    <article id="case" class="case-card"><div class="empty"><b>Кейс не выбран</b><span>Выберите кейс в очереди слева. Сверху — самые приоритетные.</span></div></article>
   </section>
 
   <section id="view-check" class="view hidden">
-    <form id="check-form" class="check">
-      <textarea id="check-text" rows="6" placeholder="Текст поста, сообщение, расшифровка голосового (ru / kk / транслит)"></textarea>
-      <div class="row">
-        <input id="check-files" type="file" accept="image/jpeg,image/png,image/webp,audio/*" multiple>
-        <input id="check-channel" placeholder="Канал / источник, например @channel">
-        <label class="inline"><input id="check-store" type="checkbox" checked> сохранить в реестр</label>
-        <button type="submit">Проверить</button>
-      </div>
-    </form>
-    <div id="check-result"></div>
+    <div class="page-head">
+      <h1>Проверить пост</h1>
+      <p>Текст, скриншот или голосовое на русском, казахском или транслите. Ответ — уровень риска и признаки с цитатами.</p>
+    </div>
+    <div class="check-layout">
+      <form id="check-form" class="check panel">
+        <div class="row examples-row"><span class="muted small">Примеры</span><span id="examples" class="row"></span></div>
+        <textarea id="check-text" rows="8" maxlength="20000" placeholder="Вставьте текст поста, сообщение или расшифровку голосового"></textarea>
+        <div class="check-grid">
+          <label class="file-drop">
+            <input id="check-files" type="file" accept="image/jpeg,image/png,image/webp,audio/*" multiple aria-label="Скриншоты или голосовые">
+            <span>Скриншоты или голосовые</span>
+          </label>
+          <input id="check-channel" placeholder="Канал или источник, например @channel">
+        </div>
+        <div class="row check-actions">
+          <label class="inline"><input id="check-store" type="checkbox" checked> сохранить в реестр</label>
+          <button type="submit">Проверить</button>
+        </div>
+      </form>
+      <div id="check-result" class="check-result"></div>
+    </div>
   </section>
 
   <section id="view-bank" class="view hidden">
-    <p class="muted">Лента реквизитов, засвеченных в постах со средним и высоким риском (то же, что получает банк по API).</p>
-    <table class="table"><thead><tr><th>Тип</th><th>Значение</th><th>Балл</th><th>Постов</th><th>Треки</th><th>Кейсы</th><th>Последний раз</th></tr></thead><tbody id="bank-rows"></tbody></table>
+    <div class="page-head">
+      <h1>Реквизиты</h1>
+      <p>Номера, карты, IBAN и платёжные ссылки из постов со средним и высоким риском — то же, что банк получает по API.</p>
+    </div>
+    <form id="bank-form" class="panel bank-check">
+      <h3>Проверка реквизита банком</h3>
+      <div class="row">
+        <input id="bank-value" placeholder="+7 777 123 45 67, номер карты, IBAN KZ или kaspi.kz/pay/…" aria-label="Реквизит">
+        <button type="submit">Проверить</button>
+      </div>
+      <p class="muted small">Значение не сохраняется. Ответ — признаки для проверки, а не основание для блокировки.</p>
+      <div id="bank-check-result"></div>
+    </form>
+    <div class="panel table-panel">
+      <div class="row bank-head">
+        <h3>Лента реквизитов</h3>
+        <input id="bank-search" type="search" placeholder="Фильтр по значению или кейсу" aria-label="Фильтр реквизитов">
+      </div>
+      <div class="table-scroll">
+        <table class="table"><thead><tr><th>Тип</th><th>Значение</th><th class="num">Балл</th><th class="num">Постов</th><th>Треки</th><th>Кейсы</th><th>Последний раз</th></tr></thead><tbody id="bank-rows"></tbody></table>
+      </div>
+    </div>
   </section>
 </main>
 
-<div id="modal" class="modal hidden"><div class="modal-body"><button class="close" id="modal-close">×</button><div id="modal-content"></div></div></div>
-<script src="/static/app.js"></script>
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-body"><button class="close" id="modal-close" aria-label="Закрыть">×</button><div id="modal-content"></div></div></div>
+<script type="module" src="/static/app.js"></script>
 </body>
 </html>

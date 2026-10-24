@@ -1,68 +1,13 @@
 // ПРУФ: дашборд аналитика. Без сборки и внешних библиотек.
 // Весь текст из постов выводится только через textContent (посты недоверенные).
-"use strict";
+import { graphView } from "./graph.js";
+import {
+  $, LEVEL, REQ_TYPE, SOURCE, STATUS, TRACK, api, badge, chips, day, el, lazyImg, releaseImages, showError, toast, token, when,
+} from "./lib.js";
+import { loadOverview } from "./overview.js";
 
-const TRACK = { lottery: "Розыгрыши", casino: "Казино", pyramid: "Пирамиды" };
-const LEVEL = { high: "высокий", medium: "средний", low: "низкий" };
-const STATUS = { new: "Новый", in_review: "В работе", confirmed: "Подтверждён", dismissed: "Отклонён" };
-const COLORS = { post: "#1f5fbf", requisite: "#c62828", domain: "#8e24aa", channel: "#9aa0a6" };
-const state = { cases: [], current: null, blobUrls: [] };
-
-const $ = (sel) => document.querySelector(sel);
-
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === null || v === false) continue;
-    if (k === "class") node.className = v;
-    else if (k === "style") node.setAttribute("style", v);
-    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
-  }
-  for (const c of children.flat()) {
-    if (c === null || c === undefined || c === false) continue;
-    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
-  }
-  return node;
-}
-
-function token() {
-  // sessionStorage: токен живёт до закрытия вкладки и не остаётся в браузере надолго
-  try { return sessionStorage.getItem("pruf_token") || ""; } catch { return ""; }
-}
-
-async function api(path, opts = {}) {
-  const headers = Object.assign({}, opts.headers || {});
-  const t = token();
-  if (t) headers.Authorization = "Bearer " + t;
-  const res = await fetch(path, Object.assign({}, opts, { headers }));
-  if (opts.raw) {
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res;
-  }
-  const body = await res.json().catch(() => ({ success: false, error: "HTTP " + res.status }));
-  if (!body.success) throw new Error(body.error || "HTTP " + res.status);
-  return body;
-}
-
-async function imageUrl(artifactId) {
-  const res = await api(`/api/v1/artifacts/${artifactId}/file`, { raw: true });
-  const url = URL.createObjectURL(await res.blob());
-  state.blobUrls.push(url);
-  return url;
-}
-
-function badge(level, score) {
-  return el("span", { class: "badge " + level }, `${LEVEL[level] || level} · ${Math.round(score)}`);
-}
-
-function chips(tracks) {
-  return (tracks || []).filter(Boolean).map((t) => el("span", { class: "chip " + t }, TRACK[t] || t));
-}
-
-function showError(target, err) {
-  target.replaceChildren(el("p", { class: "err" }, "Ошибка: " + err.message));
-}
+const POSTS_PAGE = 12;
+const state = { cases: [], current: null, view: "overview" };
 
 // ---------------- статистика ----------------
 async function loadStats() {
@@ -102,18 +47,36 @@ async function loadCases() {
   try {
     const { data, meta } = await api("/api/v1/cases?" + params);
     state.cases = data;
-    list.replaceChildren(...data.map(caseItem));
     $("#cases-total").textContent = `Кейсов: ${meta.total}`;
-    if (!data.length) list.replaceChildren(el("p", { class: "muted" }, "Кейсов нет. Загрузите посты через «Проверить» или scripts/seed_demo.py."));
+    renderQueue();
   } catch (err) {
     showError(list, err);
   }
 }
 
+function caseMatches(c, q) {
+  if (!q) return true;
+  const hay = [c.key, ...c.channels, ...c.requisites, ...c.domains].join(" ").toLowerCase();
+  return hay.includes(q);
+}
+
+function renderQueue() {
+  const q = $("#f-search").value.trim().toLowerCase();
+  const shown = state.cases.filter((c) => caseMatches(c, q));
+  const list = $("#cases");
+  if (!shown.length) {
+    list.replaceChildren(el("p", { class: "muted" }, state.cases.length ? "Ничего не найдено." : "Кейсов нет. Загрузите посты через «Проверить» или scripts/seed_demo.py."));
+    return;
+  }
+  list.replaceChildren(...shown.map(caseItem));
+}
+
 function caseItem(c) {
-  const li = el("li", { "data-key": c.key, onclick: () => openCase(c.key) },
-    el("div", {}, badge(c.level, c.score), " ", el("b", {}, c.key), " ", el("span", { class: "muted" }, STATUS[c.status] || c.status)),
+  const li = el("li", { "data-key": c.key, tabindex: 0, onclick: () => openCase(c.key), onkeydown: (e) => { if (e.key === "Enter") openCase(c.key); } },
+    el("div", { class: "case-top" }, el("span", {}, badge(c.level, c.score), " ", el("b", {}, c.key), " ", el("span", { class: "status-pill " + c.status }, STATUS[c.status] || c.status)),
+      el("span", { class: "prio", title: "Приоритет: риск, охват каналов, связь треков, повтор пруфа, скорость, реквизиты" }, `приоритет ${Math.round(c.priority)}`)),
     el("div", {}, chips(c.tracks)),
+    c.priority_reasons && c.priority_reasons.length ? el("div", { class: "reasons" }, c.priority_reasons.map((r) => el("span", {}, r))) : null,
     el("div", { class: "meta" }, `${c.size} постов · ${c.channels.length} каналов · семейств пруфов: ${c.families}`),
     c.requisites.length ? el("div", { class: "meta" }, "Реквизиты: " + c.requisites.slice(0, 3).join(", ")) : null,
   );
@@ -121,15 +84,21 @@ function caseItem(c) {
   return li;
 }
 
-// ---------------- карточка кейса ----------------
-function releaseImages() {
-  for (const url of state.blobUrls) URL.revokeObjectURL(url);
-  state.blobUrls = [];
+function moveSelection(delta) {
+  const items = [...document.querySelectorAll(".case-list li")];
+  if (!items.length) return;
+  const i = items.findIndex((li) => li.dataset.key === state.current);
+  const next = items[Math.max(0, Math.min(items.length - 1, i + delta))];
+  next.scrollIntoView({ block: "nearest" });
+  openCase(next.dataset.key);
 }
 
+// ---------------- карточка кейса ----------------
 async function openCase(key) {
+  if (state.view !== "queue") switchView("queue");
   state.current = key;
   releaseImages();
+  history.replaceState(null, "", "#case/" + encodeURIComponent(key));
   document.querySelectorAll(".case-list li").forEach((li) => li.classList.toggle("active", li.dataset.key === key));
   const card = $("#case");
   card.replaceChildren(el("p", { class: "muted" }, "Загрузка…"));
@@ -141,15 +110,13 @@ async function openCase(key) {
   }
 }
 
-function renderCase(d) {
-  const c = d.case;
-  const card = $("#case");
-  const statusSel = el("select", {}, ...Object.entries(STATUS).map(([v, label]) => {
+function statusControls(c, d) {
+  const statusSel = el("select", { "aria-label": "Статус кейса" }, ...Object.entries(STATUS).map(([v, label]) => {
     const o = el("option", { value: v }, label);
     if (v === d.status.status) o.selected = true;
     return o;
   }));
-  const note = el("input", { placeholder: "Заметка аналитика", value: d.status.note || "" });
+  const note = el("input", { placeholder: "Заметка аналитика", value: d.status.note || "", maxlength: 1000 });
   const save = el("button", { onclick: async () => {
     try {
       await api("/api/v1/cases/" + encodeURIComponent(c.key), {
@@ -157,66 +124,162 @@ function renderCase(d) {
         body: JSON.stringify({ status: statusSel.value, note: note.value || null }),
       });
       loadCases();
-      save.textContent = "Сохранено";
-    } catch (err) { save.textContent = err.message; }
+      toast(`Кейс ${c.key}: ${STATUS[statusSel.value]}`, "ok");
+    } catch (err) { toast(err.message, "bad"); }
   } }, "Сохранить статус");
   const exportBtn = el("button", { class: "primary", onclick: () => exportCase(c.key) }, "Пакет доказательств (ZIP)");
+  const report = el("a", { class: "button", href: `/static/report.html#${encodeURIComponent(c.key)}`, target: "_blank" }, "Отчёт для печати");
+  return el("div", { class: "actions" }, statusSel, note, save, exportBtn, report);
+}
 
-  const proofs = el("div", { class: "thumbs" });
-  const posts = d.posts.map((p) => renderPost(p, proofs));
+function caseFacts(c, d) {
+  const images = d.posts.flatMap((p) => (p.artifacts || []).filter((a) => a.kind === "image"));
+  const fact = (v, l) => el("div", { class: "fact" }, el("b", {}, v), el("span", {}, l));
+  const days = c.first_seen && c.last_seen ? Math.max(1, Math.round((new Date(c.last_seen) - new Date(c.first_seen)) / 86400000)) : "?";
+  return el("div", { class: "facts" },
+    fact(c.size, "постов"), fact(c.channels.length, "каналов"), fact(c.requisites.length, "реквизитов"),
+    fact(images.length, "скринов"), fact(c.families, "семейств пруфов"), fact(days, "дней активности"));
+}
 
-  card.replaceChildren(
+function renderCase(d) {
+  const c = d.case;
+  const postsCol = el("div", { class: "posts-col" });
+  const posts = d.posts.map(renderPost);
+  const showPosts = (n) => {
+    postsCol.replaceChildren(...posts.slice(0, n));
+    if (posts.length > n) postsCol.append(el("button", { class: "more", onclick: () => showPosts(n + POSTS_PAGE * 3) }, `Показать ещё (${posts.length - n})`));
+  };
+  showPosts(POSTS_PAGE);
+  const jumpToPost = (id) => {
+    const i = d.posts.findIndex((p) => p.id === id);
+    if (i < 0) return;
+    if (!posts[i].isConnected) showPosts(i + POSTS_PAGE);
+    posts[i].scrollIntoView({ behavior: "smooth", block: "center" });
+    posts[i].classList.remove("flash"); void posts[i].offsetWidth; posts[i].classList.add("flash");
+  };
+
+  $("#case").replaceChildren(
     el("div", { class: "case-head" },
       el("div", {},
         el("h2", {}, `Кейс ${c.key} `, badge(c.level, c.score)),
         el("div", {}, chips(c.tracks)),
-        el("div", { class: "muted" }, `${c.size} постов · ${c.first_seen ? c.first_seen.slice(0, 10) : "?"} — ${c.last_seen ? c.last_seen.slice(0, 10) : "?"}`),
-        el("div", { class: "muted" }, "Каналы: " + (c.channels.join(", ") || "—")),
-        el("div", { class: "muted" }, "Реквизиты: " + (c.requisites.join(", ") || "—")),
-        c.domains.length ? el("div", { class: "muted" }, "Домены: " + c.domains.join(", ")) : null,
+        el("div", { class: "muted" }, `${day(c.first_seen) || "?"} — ${day(c.last_seen) || "?"}`),
       ),
-      el("div", { class: "actions" }, statusSel, note, save, exportBtn),
+      statusControls(c, d),
     ),
-    el("p", { class: "muted" }, "Система показывает признаки, а не вердикт. Решение по кейсу принимает аналитик."),
+    caseFacts(c, d),
+    el("div", { class: "kv" },
+      el("div", {}, el("span", { class: "muted" }, "Реквизиты: "), c.requisites.join(", ") || "—"),
+      el("div", {}, el("span", { class: "muted" }, "Каналы: "), c.channels.join(", ") || "—"),
+      c.domains.length ? el("div", {}, el("span", { class: "muted" }, "Домены: "), c.domains.join(", ")) : null,
+    ),
+    el("p", { class: "note" }, "Система показывает признаки, а не вердикт. Решение по кейсу принимает аналитик."),
     el("div", { class: "grid2" },
-      el("div", {}, el("h3", {}, "Граф связей"), graphSvg(d.graph),
-        el("div", { class: "legend" }, "● пост  ● реквизит  ● домен  ● канал · линии: общий пруф, реквизит, ссылка"),
-        el("h3", {}, "Пруфы (нажмите — таймлайн появлений)"), proofs,
-        d.families.length ? el("p", { class: "muted" }, `Семейства по общим пруфам: ${d.families.map((f) => "#" + f.join(", #")).join(" | ")}`) : null),
-      el("div", {}, el("h3", {}, `Посты (${d.posts.length})`), el("div", { class: "posts-col" }, posts)),
+      el("div", {},
+        el("h3", {}, "Граф связей ", el("span", { class: "muted small" }, "наведите на узел, клик по посту — к посту")),
+        graphView(d.graph, jumpToPost),
+        el("h3", {}, "Пруфы по семействам ", el("span", { class: "muted small" }, "клик — таймлайн появлений")),
+        proofFamilies(d)),
+      el("div", {}, el("h3", {}, `Посты (${d.posts.length})`), postsCol),
     ),
   );
+}
+
+// Одна карточка на семейство вместо десятков одинаковых превью
+function proofFamilies(d) {
+  const famOf = new Map();
+  d.families.forEach((f, i) => f.forEach((pid) => famOf.set(pid, i)));
+  const groups = new Map();
+  for (const p of d.posts) {
+    for (const art of p.artifacts || []) {
+      if (art.kind !== "image") continue;
+      const key = famOf.has(p.id) ? "f" + famOf.get(p.id) : "a" + art.id;
+      if (!groups.has(key)) groups.set(key, { arts: [], channels: new Set(), first: p.posted_at, last: p.posted_at });
+      const g = groups.get(key);
+      g.arts.push(art);
+      if (p.channel) g.channels.add(p.channel);
+      if (p.posted_at && (!g.first || p.posted_at < g.first)) g.first = p.posted_at;
+      if (p.posted_at && (!g.last || p.posted_at > g.last)) g.last = p.posted_at;
+    }
+  }
+  if (!groups.size) return el("p", { class: "muted" }, "В кейсе нет скриншотов.");
+  const sorted = [...groups.values()].sort((a, b) => b.arts.length - a.arts.length);
+  return el("div", { class: "families" }, sorted.map((g) => {
+    const art = g.arts[0];
+    return el("button", { class: "family", onclick: () => openTimeline(art.id), title: "Открыть таймлайн" },
+      el("div", { class: "stack" + (g.arts.length > 1 ? " many" : "") }, lazyImg(art.id, "пруф")),
+      el("div", { class: "family-cap" },
+        g.arts.length > 1 ? el("b", { class: "copies" }, `×${g.arts.length} копий`) : el("b", {}, "1 копия"),
+        el("div", { class: "muted" }, `${g.channels.size} каналов · ${day(g.first)} — ${day(g.last)}`)));
+  }));
+}
+
+// Признак ловит основу слова («розыгр»), а подсвечиваем слово целиком
+const LETTER = /[\p{L}\p{N}]/u;
+function wholeWords(text, s, e) {
+  while (s > 0 && LETTER.test(text[s - 1])) s--;
+  while (e < text.length && LETTER.test(text[e])) e++;
+  return { s, e };
+}
+
+// Подсветка найденных признаков прямо в тексте: span указывает на исходный текст
+function highlighted(text, evidence, source) {
+  const spans = (evidence || [])
+    .filter((e) => e.source === source && Array.isArray(e.span) && e.span[1] > e.span[0] && e.span[1] <= text.length)
+    .map((e) => ({ ...wholeWords(text, e.span[0], e.span[1]), ev: e }))
+    .sort((a, b) => a.s - b.s || b.e - a.e);
+  const out = [];
+  let pos = 0;
+  for (const sp of spans) {
+    if (sp.s < pos) continue;
+    if (sp.s > pos) out.push(text.slice(pos, sp.s));
+    const cls = sp.ev.stop ? "hl stop" : "hl";
+    out.push(el("mark", { class: cls, title: `${sp.ev.label}${sp.ev.weight ? ` (${sp.ev.weight > 0 ? "+" : ""}${sp.ev.weight})` : ""}` }, text.slice(sp.s, sp.e)));
+    pos = sp.e;
+  }
+  out.push(text.slice(pos));
+  return el("div", { class: "text" }, out);
+}
+
+// Один признак может сработать в нескольких местах: показываем строку один раз со всеми цитатами
+function groupEvidence(evidence) {
+  const groups = new Map();
+  for (const e of evidence || []) {
+    const key = `${e.feature_id}|${e.source}`;
+    if (!groups.has(key)) groups.set(key, { ...e, quotes: [] });
+    if (e.quote && !groups.get(key).quotes.includes(e.quote)) groups.get(key).quotes.push(e.quote);
+  }
+  return [...groups.values()];
 }
 
 function evidenceLine(e) {
   const cls = e.stop ? "stop" : e.source === "registry" || e.source === "graph" ? "ctx" : e.weight > 0 ? "pos" : "";
   const w = e.weight ? ` (${e.weight > 0 ? "+" : ""}${e.weight})` : "";
   return el("div", { class: "ev " + cls },
-    el("span", {}, e.label + w), el("span", { class: "src" }, e.source),
-    e.quote ? el("q", {}, e.quote) : null);
+    el("span", {}, e.label + w), el("span", { class: "src" }, SOURCE[e.source] || e.source),
+    (e.quotes || (e.quote ? [e.quote] : [])).map((q) => el("q", {}, q)));
 }
 
-function renderPost(p, proofs) {
+function renderPost(p) {
   const a = p.analysis || {};
-  const ev = (a.evidence || []).slice(0, 12).map(evidenceLine);
-  for (const art of p.artifacts || []) {
-    if (art.kind !== "image") continue;
-    const img = el("img", { alt: "пруф" });
-    imageUrl(art.id).then((u) => { img.src = u; }).catch(() => {});
-    proofs.append(el("div", { class: "thumb", onclick: () => openTimeline(art.id) }, img, el("div", { class: "cap" }, `#${p.id} · ${p.channel || ""}`)));
-  }
-  const related = el("button", { onclick: async () => {
+  const grouped = groupEvidence(a.evidence);
+  const ev = grouped.slice(0, 12).map(evidenceLine);
+  const related = el("button", { class: "link", onclick: async () => {
     try {
       const { data, meta } = await api(`/api/v1/posts/${p.id}/related`);
       related.replaceWith(el("div", { class: "muted" }, `Связанные (${meta.total}): ` + data.map((r) => `#${r.id} ${r.channel || ""} [${LEVEL[r.level]}]`).join(", ")));
     } catch (err) { related.textContent = err.message; }
   } }, "Найти связанные");
-  return el("div", { class: "post" },
-    el("div", {}, el("b", {}, `#${p.id}`), " ", badge(p.level, p.score), " ", el("span", { class: "muted" }, `${p.channel || "—"} · ${(p.posted_at || "").slice(0, 16).replace("T", " ")}`)),
-    a.summary ? el("div", {}, a.summary) : null,
-    p.text ? el("div", { class: "text" }, p.text) : null,
-    p.ocr_text ? el("details", {}, el("summary", {}, "Текст со скриншота (OCR)"), el("div", { class: "text" }, p.ocr_text)) : null,
-    ev, (a.degraded || []).map((d) => el("div", { class: "banner" }, d.reason)), related);
+  const thumbs = (p.artifacts || []).filter((x) => x.kind === "image").map((art) =>
+    el("button", { class: "mini-thumb", onclick: () => openTimeline(art.id), title: "Таймлайн пруфа" }, lazyImg(art.id, "скрин")));
+  return el("div", { class: "post", "data-post": p.id },
+    el("div", {}, el("b", {}, `#${p.id}`), " ", badge(p.level, p.score), " ", el("span", { class: "muted" }, `${p.channel || "—"} · ${when(p.posted_at)}`)),
+    a.summary ? el("div", { class: "summary" }, a.summary) : null,
+    p.text ? highlighted(p.text, a.evidence, "text") : null,
+    thumbs.length ? el("div", { class: "mini-thumbs" }, thumbs) : null,
+    p.ocr_text ? el("details", {}, el("summary", {}, "Текст со скриншота (OCR)"), highlighted(p.ocr_text, a.evidence, "ocr")) : null,
+    el("details", { class: "evidence" }, el("summary", {}, `Признаки (${grouped.length})`), ev),
+    (a.degraded || []).map((x) => el("div", { class: "banner" }, x.reason)), related);
 }
 
 async function exportCase(key) {
@@ -226,82 +289,8 @@ async function exportCase(key) {
     const a = el("a", { href: url, download: `pruf_${key}.zip` });
     document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-  } catch (err) { alert("Экспорт не удался: " + err.message); }
-}
-
-// ---------------- граф (простая силовая укладка) ----------------
-// 37 копий одного пруфа дают 666 рёбер «общий пруф»: рисуем только остовное дерево,
-// связность та же, а граф читается.
-function sparseReuse(edges) {
-  const parent = new Map();
-  const find = (x) => { while (parent.has(x) && parent.get(x) !== x) x = parent.get(x); return x; };
-  return edges.filter((e) => {
-    if (e.type !== "reuses") return true;
-    const a = find(e.source), b = find(e.target);
-    if (a === b) return false;
-    parent.set(a, b); parent.set(b, b);
-    return true;
-  });
-}
-
-function graphSvg(g) {
-  const W = 640, H = 360, NS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  svg.setAttribute("class", "graph");
-  const nodes = g.nodes.map((n, i) => ({ ...n, x: W / 2 + 150 * Math.cos(i), y: H / 2 + 120 * Math.sin(i), vx: 0, vy: 0 }));
-  const idx = new Map(nodes.map((n, i) => [n.id, i]));
-  const edges = sparseReuse(g.edges.filter((e) => idx.has(e.source) && idx.has(e.target)))
-    .map((e) => ({ ...e, s: idx.get(e.source), t: idx.get(e.target) }));
-  for (let it = 0; it < 300; it++) {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i], b = nodes[j];
-        let dx = a.x - b.x, dy = a.y - b.y; const d2 = dx * dx + dy * dy + 0.01;
-        const f = 900 / d2; dx *= f; dy *= f;
-        a.vx += dx; a.vy += dy; b.vx -= dx; b.vy -= dy;
-      }
-    }
-    for (const e of edges) {
-      const a = nodes[e.s], b = nodes[e.t];
-      const dx = b.x - a.x, dy = b.y - a.y; const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
-      const f = (d - 60) * 0.02;
-      a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
-    }
-    for (const n of nodes) {
-      n.vx += (W / 2 - n.x) * 0.002; n.vy += (H / 2 - n.y) * 0.002;
-      n.x = Math.max(12, Math.min(W - 12, n.x + n.vx * 0.5)); n.y = Math.max(12, Math.min(H - 12, n.y + n.vy * 0.5));
-      n.vx *= 0.6; n.vy *= 0.6;
-    }
-  }
-  for (const e of edges) {
-    const line = document.createElementNS(NS, "line");
-    const a = nodes[e.s], b = nodes[e.t];
-    line.setAttribute("x1", a.x); line.setAttribute("y1", a.y); line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
-    line.setAttribute("stroke", e.type === "reuses" ? "#ff1744" : e.type === "mentions" ? "#c62828" : "#9aa0a6");
-    line.setAttribute("stroke-width", e.type === "reuses" ? 2 : 1);
-    if (e.type === "posted_in") line.setAttribute("stroke-dasharray", "3 3");
-    svg.append(line);
-  }
-  for (const n of nodes) {
-    const c = document.createElementNS(NS, "circle");
-    c.setAttribute("cx", n.x); c.setAttribute("cy", n.y);
-    c.setAttribute("r", n.type === "post" ? 7 : 6);
-    const levelColor = n.level === "high" ? "#c62828" : n.level === "medium" ? "#e08a00" : "#2e7d32";
-    c.setAttribute("fill", n.type === "post" ? levelColor : COLORS[n.type] || "#999");
-    if (n.type === "requisite") c.setAttribute("stroke", "#000");
-    const title = document.createElementNS(NS, "title");
-    title.textContent = n.label || n.channel || n.id;
-    c.append(title);
-    svg.append(c);
-    if (n.type !== "post") {
-      const t = document.createElementNS(NS, "text");
-      t.setAttribute("x", n.x + 8); t.setAttribute("y", n.y + 3);
-      t.textContent = String(n.label || "").slice(0, 22);
-      svg.append(t);
-    }
-  }
-  return svg;
+    toast("Пакет доказательств скачан", "ok");
+  } catch (err) { toast("Экспорт не удался: " + err.message, "bad"); }
 }
 
 // ---------------- таймлайн пруфа ----------------
@@ -313,36 +302,54 @@ function boxes(changes, which) {
     });
 }
 
+const digitChanges = (item) => ((item.diff && item.diff.changes) || []).filter((c) => c.kind === "amount" || c.kind === "date");
+
 async function openTimeline(artifactId) {
   const content = $("#modal-content");
   content.replaceChildren(el("p", {}, "Загрузка таймлайна…"));
   $("#modal").classList.remove("hidden");
+  $("#modal-close").focus();
   try {
     const { data } = await api(`/api/v1/artifacts/${artifactId}/timeline`);
-    const edited = data.items.filter((i) => i.diff && (i.diff.changes || []).some((c) => c.kind === "amount" || c.kind === "date"));
-    const items = data.items.map((item) => {
-      const img = el("img", { alt: "копия пруфа" });
-      imageUrl(item.artifact_id).then((u) => { img.src = u; }).catch(() => {});
-      const changes = item.diff ? item.diff.changes : [];
-      const digitChanges = (changes || []).filter((c) => c.kind === "amount" || c.kind === "date");
-      const isEdited = digitChanges.length > 0;
-      return el("div", { class: "tl-item" + (item.is_root ? " root" : "") + (isEdited ? " edited" : "") },
-        el("div", { class: "shot" }, img, boxes(changes, "box_after")),
-        el("div", {}, el("b", {}, (item.post.posted_at || "").slice(0, 10)), " ", badge(item.post.level, item.post.score)),
-        el("div", { class: "muted" }, `${item.post.channel || "—"} · пост #${item.post.id}`),
-        item.is_root ? el("div", { class: "muted" }, "выбранная копия") : null,
-        digitChanges.map((c) => el("div", { class: "diff" }, `${c.before} → ${c.after}`)),
-      );
-    });
+    const edited = data.items.filter((i) => digitChanges(i).length);
+    const onlyEdited = el("input", { type: "checkbox" });
+    const grid = el("div", { class: "timeline" });
+    const draw = () => grid.replaceChildren(...data.items.filter((i) => !onlyEdited.checked || i.is_root || digitChanges(i).length).map(timelineItem));
+    onlyEdited.addEventListener("change", draw);
+    draw();
+    const channels = new Set(data.items.map((i) => i.post.channel).filter(Boolean));
     content.replaceChildren(
       el("h2", {}, `Пруф встречается ${data.appearances} раз`),
-      el("p", { class: "muted" }, `Копий с изменёнными суммами или датами: ${edited.length}. Красная рамка показывает отличающиеся цифры относительно выбранной копии.`),
-      el("div", { class: "timeline" }, items),
+      el("p", { class: "muted" }, `${channels.size} каналов · ${day(data.items[0] && data.items[0].post.posted_at)} — ${day(data.items.length && data.items[data.items.length - 1].post.posted_at)}. Копий с изменёнными суммами или датами: ${edited.length}. Красная рамка показывает отличающиеся цифры относительно выбранной копии.`),
+      edited.length ? el("label", { class: "inline" }, onlyEdited, "только копии с правками") : null,
+      grid,
     );
   } catch (err) { showError(content, err); }
 }
 
+function timelineItem(item) {
+  const changes = digitChanges(item);
+  return el("div", { class: "tl-item" + (item.is_root ? " root" : "") + (changes.length ? " edited" : "") },
+    el("div", { class: "shot" }, lazyImg(item.artifact_id, "копия пруфа"), boxes(changes, "box_after")),
+    el("div", {}, el("b", {}, day(item.post.posted_at)), " ", badge(item.post.level, item.post.score)),
+    el("div", { class: "muted" }, `${item.post.channel || "—"} · пост #${item.post.id}`),
+    item.is_root ? el("div", { class: "muted" }, "выбранная копия") : null,
+    changes.map((c) => el("div", { class: "diff" }, `${c.before} → ${c.after}`)),
+  );
+}
+
+function closeModal() {
+  $("#modal").classList.add("hidden");
+}
+
 // ---------------- проверка ----------------
+const EXAMPLES = {
+  "Розыгрыш": "Поздравляем! Вы выиграли iPhone 15 в нашем розыгрыше 🎁 Для получения приза оплатите доставку 5000 тг на Kaspi +7 747 318 52 64 и пришлите чек в лс",
+  "Казино (kk)": "Кеше 2000 салып 180 000 ұтып алдым 😱 Сілтеме профильде, промокод BONUS777 — депозитке +200% фриспин",
+  "Пирамида (translit)": "Vlozhi 10 000 tg i poluchi 30 000 cherez nedelyu! Priglasi 3 druzei i dohod udvoitsya. Perevod na kaspi.kz/pay/invest1507",
+  "Легальный": "Розыгрыш без взноса: подпишитесь на канал и отметьте друга. Итоги 1 ноября в прямом эфире, официальные правила по ссылке на сайте магазина.",
+};
+
 async function submitCheck(ev) {
   ev.preventDefault();
   const out = $("#check-result");
@@ -363,24 +370,30 @@ async function submitCheck(ev) {
       ({ data } = await api("/api/v1/analyze/text", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, store: false }) }));
       data = { analysis: data, proofs: [] };
     }
-    renderCheck(data);
+    renderCheck(data, text);
     loadStats(); loadCases();
   } catch (err) { showError(out, err); }
 }
 
-function renderCheck(data) {
+function gauge(score, level) {
+  return el("div", { class: "gauge " + level, style: `--p:${Math.max(0, Math.min(100, score))}` },
+    el("div", { class: "gauge-v" }, Math.round(score)), el("div", { class: "gauge-l" }, LEVEL[level] || level));
+}
+
+function renderCheck(data, text) {
   const a = data.analysis;
-  const tracks = a.tracks.map((t) => el("div", {}, `${TRACK[t.track]}: ${t.score}`, t.capped_reason ? el("span", { class: "muted" }, ` (${t.capped_reason})`) : null,
-    el("div", { class: "score-bar" }, el("div", { style: `width:${t.score}%;background:${t.level === "high" ? "var(--high)" : t.level === "medium" ? "var(--medium)" : "var(--low)"}` }))));
+  const tracks = a.tracks.map((t) => el("div", { class: "track-score" }, el("span", {}, `${TRACK[t.track]}: ${t.score}`), t.capped_reason ? el("span", { class: "muted" }, ` (${t.capped_reason})`) : null,
+    el("div", { class: "score-bar" }, el("div", { class: t.level, style: `width:${t.score}%` }))));
   const proofs = (data.proofs || []).map((p) => el("div", { class: "post" },
     el("b", {}, `Пруф: найдено появлений в реестре: ${p.match_count}`),
     p.match_count ? el("button", { onclick: () => openTimeline(p.artifact_id) }, "Открыть таймлайн") : null,
     p.matches.flatMap((m) => m.changes.filter((c) => c.kind === "amount" || c.kind === "date")).slice(0, 5).map((c) => el("div", { class: "diff" }, `${c.before} → ${c.after}`))));
   $("#check-result").replaceChildren(
-    el("h2", {}, "Риск ", badge(a.level, a.score), a.track ? el("span", {}, " ", chips([a.track])) : null),
-    el("p", {}, a.summary),
+    el("div", { class: "check-head" }, gauge(a.score, a.level),
+      el("div", {}, el("h2", {}, "Риск ", badge(a.level, a.score), a.track ? el("span", {}, " ", chips([a.track])) : null), el("p", {}, a.summary))),
     (a.degraded || []).map((d) => el("div", { class: "banner" }, d.reason)),
-    el("div", { class: "grid2" }, el("div", {}, el("h3", {}, "Признаки"), a.evidence.map(evidenceLine)),
+    text ? el("div", {}, el("h3", {}, "Где найдены признаки"), highlighted(text, a.evidence, "text")) : null,
+    el("div", { class: "grid2" }, el("div", {}, el("h3", {}, "Признаки"), groupEvidence(a.evidence).map(evidenceLine)),
       el("div", {}, el("h3", {}, "Баллы по трекам"), tracks, proofs,
         a.requisites.length ? el("p", {}, "Реквизиты: " + a.requisites.map((r) => r.display).join(", ")) : null,
         data.post_id ? el("p", { class: "muted" }, `Сохранено как пост #${data.post_id}`) : null)),
@@ -392,19 +405,51 @@ async function loadBank() {
   const tbody = $("#bank-rows");
   try {
     const { data } = await api("/api/v1/bank/requisites?limit=200");
-    tbody.replaceChildren(...data.map((r) => el("tr", {},
-      el("td", {}, r.type), el("td", {}, r.value), el("td", {}, Math.round(r.max_score)), el("td", {}, r.posts),
-      el("td", {}, chips(r.tracks)), el("td", {}, r.cases.join(", ")), el("td", {}, (r.last_seen || "").slice(0, 10)))));
+    state.bank = data;
+    renderBank();
   } catch (err) {
     tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "err" }, err.message + " (нужен токен банка или режим разработки)")));
   }
 }
 
+function renderBank() {
+  const q = $("#bank-search").value.trim().toLowerCase();
+  const rows = (state.bank || []).filter((r) => !q || r.value.toLowerCase().includes(q) || r.cases.join(" ").toLowerCase().includes(q));
+  $("#bank-rows").replaceChildren(...rows.map((r) => el("tr", {},
+    el("td", {}, el("span", { class: "req-type" }, REQ_TYPE[r.type] || r.type)), el("td", { class: "mono" }, r.value), el("td", {}, Math.round(r.max_score)), el("td", {}, r.posts),
+    el("td", {}, chips(r.tracks)), el("td", {}, r.cases.map((k) => el("button", { class: "link", onclick: () => openCase(k) }, k))), el("td", {}, day(r.last_seen)))));
+}
+
+async function bankCheck(ev) {
+  ev.preventDefault();
+  const out = $("#bank-check-result");
+  const value = $("#bank-value").value.trim();
+  if (!value) return;
+  try {
+    const { data } = await api("/api/v1/bank/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) });
+    out.replaceChildren(data.found
+      ? el("div", { class: "verdict hit" }, el("b", {}, `⚠ ${REQ_TYPE[data.type] || data.type} ${data.value} встречается в ${data.posts} постах с признаками схем`),
+        el("div", {}, chips(data.tracks), ` · макс. балл ${Math.round(data.max_score)} · впервые ${day(data.first_seen)}`), el("div", { class: "muted" }, data.note))
+      : el("div", { class: "verdict clean" }, el("b", {}, `✓ ${REQ_TYPE[data.type] || data.type} не встречался в постах с признаками схем`), el("div", { class: "muted" }, "Отсутствие в реестре не гарантирует безопасность.")));
+  } catch (err) { showError(out, err); }
+}
+
 // ---------------- навигация ----------------
 function switchView(name) {
+  state.view = name;
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-" + name));
   if (name === "bank") loadBank();
+  if (name === "overview") loadOverview(openCase);
+  if (name !== "queue") history.replaceState(null, "", "#" + name);
+}
+
+function onKey(e) {
+  if (e.key === "Escape") { closeModal(); return; }
+  if (e.target.closest("input, textarea, select") || !$("#modal").classList.contains("hidden")) return;
+  if (state.view === "queue" && (e.key === "j" || e.key === "ArrowDown")) { e.preventDefault(); moveSelection(1); }
+  if (state.view === "queue" && (e.key === "k" || e.key === "ArrowUp")) { e.preventDefault(); moveSelection(-1); }
+  if (e.key === "/") { e.preventDefault(); switchView("queue"); $("#f-search").focus(); }
 }
 
 function init() {
@@ -412,14 +457,24 @@ function init() {
   $("#token").addEventListener("change", (e) => {
     try { sessionStorage.setItem("pruf_token", e.target.value.trim()); } catch { /* приватный режим */ }
     loadStats(); loadCases();
+    if (state.view === "overview") loadOverview(openCase);
   });
   document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.view)));
   ["#f-level", "#f-track", "#f-status"].forEach((id) => $(id).addEventListener("change", loadCases));
+  $("#f-search").addEventListener("input", renderQueue);
+  $("#bank-search").addEventListener("input", renderBank);
+  $("#bank-form").addEventListener("submit", bankCheck);
   $("#check-form").addEventListener("submit", submitCheck);
-  $("#modal-close").addEventListener("click", () => $("#modal").classList.add("hidden"));
-  $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("#modal").classList.add("hidden"); });
+  $("#examples").replaceChildren(...Object.entries(EXAMPLES).map(([label, text]) =>
+    el("button", { type: "button", class: "chip-btn", onclick: () => { $("#check-text").value = text; $("#check-store").checked = false; } }, label)));
+  $("#modal-close").addEventListener("click", closeModal);
+  $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+  document.addEventListener("keydown", onKey);
   loadStats();
   loadCases();
+  const hash = decodeURIComponent(location.hash.slice(1));
+  if (hash.startsWith("case/")) openCase(hash.slice(5));
+  else switchView(["queue", "check", "bank"].includes(hash) ? hash : "overview");
 }
 
 init();

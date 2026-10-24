@@ -32,12 +32,13 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
+from pruf.analytics import overview
 from pruf.api.security import RateLimiter, require_analyst, require_bank, sniff_upload
 from pruf.bot.telegram import BotLogic, HttpTelegramApi
 from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
 from pruf.graph.builder import CaseGraph, artifact_timeline
-from pruf.normalize.audio import whisper_available
+from pruf.normalize.audio import transcribe, whisper_available
 from pruf.normalize.ocr import ocr_available
 from pruf.normalize.requisites import extract_requisites
 from pruf.pipeline import Pruf, Submission, Upload
@@ -54,6 +55,8 @@ BOT_WORKERS = 2
 BOT_MAX_PENDING = 50
 WEB_DIR = ROOT / "web"
 
+
+JSON_MAX_BODY = 256 * 1024
 
 def ok(data: Any, **meta: Any) -> dict[str, Any]:
     return {"success": True, "data": data, "error": None, "meta": meta or None}
@@ -117,7 +120,10 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     @app.middleware("http")
     async def guard(request: Request, call_next):
         length = request.headers.get("content-length")
-        if length is not None and (not length.isdigit() or int(length) > max_body):
+        # Тело читается и разбирается до проверки токена, поэтому большие тела принимаем только там,
+        # где они нужны (приём файлов); JSON-маршрутам хватает 256 КБ.
+        limit = {"/api/v1/analyze": max_body, "/api/v1/telegram/webhook": WEBHOOK_MAX_BODY}.get(request.url.path, JSON_MAX_BODY)
+        if length is not None and (not length.isdigit() or int(length) > limit):
             return JSONResponse({"success": False, "data": None, "error": "Запрос слишком большой", "meta": None}, status_code=413)
         if request.method in ("POST", "PUT", "PATCH") and length is None and \
                 request.headers.get("transfer-encoding", "").lower() == "chunked":
@@ -195,8 +201,16 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
                 result = core().ingest(Submission(text=text, uploads=tuple(uploads), transcript=transcript,
                                                   channel=channel, posted_at=posted_at, source="dashboard"))
             else:  # проверка без сохранения: файл не попадает в реестр
+                audio = next((u for u in uploads if u.kind == "audio"), None)
+                if audio and not transcript:
+                    transcript = transcribe(audio.data, "." + audio.ext)
                 result = core().check(text, images=tuple(u.data for u in uploads if u.kind == "image"),
                                       transcript=transcript)
+                if audio and not transcript:
+                    # Без этого голосовое молча выпадало, а ответ выглядел как «низкий риск»
+                    analysis = result["analysis"]
+                    analysis["degraded"] = [*analysis.get("degraded", []), {
+                        "component": "whisper", "reason": "Голосовое не расшифровано: проверены только текст и изображения"}]
         except Image.DecompressionBombError as exc:
             raise HTTPException(status_code=413, detail="Изображение слишком большое") from exc
         except (UnidentifiedImageError, ValueError, OSError) as exc:  # OSError: обрезанный или битый файл
@@ -330,6 +344,11 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
                    "images_indexed": len(p.registry.images), "texts_indexed": len(p.registry.texts),
                    "capabilities": capabilities(p)})
 
+    @app.get("/api/v1/overview")
+    def overview_view(actor: str = Depends(analyst)):
+        g = graph()
+        return ok(overview(core().db, [c.key for c in g.cases()], g.case_for_post))
+
     # ---------- банки ----------
     @app.get("/api/v1/bank/requisites")
     def bank_feed(since: str | None = Query(default=None, max_length=40),
@@ -384,12 +403,14 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             raise HTTPException(status_code=400, detail="Некорректный update")
         uid = update.get("update_id")
         with bot_lock:
-            if uid in state["bot_seen"]:
+            if isinstance(uid, int) and uid in state["bot_seen"]:
                 return ok({"queued": False, "reason": "duplicate"})  # Telegram повторил доставку
-            state["bot_seen"].append(uid)
             if state["bot_pending"] >= BOT_MAX_PENDING:
-                log.warning("очередь бота переполнена, update %s пропущен", uid)
-                return ok({"queued": False, "reason": "busy"})
+                # 503, а не 200: Telegram повторит доставку позже, сообщение пользователя не потеряется
+                log.warning("очередь бота переполнена, update %s отложен", uid)
+                raise HTTPException(status_code=503, detail="Бот занят, повторите позже")
+            if isinstance(uid, int):
+                state["bot_seen"].append(uid)
             state["bot_pending"] += 1
         state["bot_pool"].submit(run_bot, bot, update)
         return ok({"queued": True})

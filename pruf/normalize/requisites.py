@@ -9,11 +9,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import unicodedata
 from dataclasses import dataclass
 
-_PHONE_RE = re.compile(r"(?<![\d+])(?:\+7|8)[\s\-()]*7\d{2}[\s\-()]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}(?!\d)")
+# «+7», «8» или голая «7» перед кодом оператора 7xx: «7 747 318 52 64», «77473185264»
+_PHONE_RE = re.compile(r"(?<![\d+])(?:\+7|8|7)[\s\-()]*7\d{2}[\s\-()]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}(?!\d)")
 _CARD_RE = re.compile(r"(?<!\d)(?:\d{4}[\s\-]?){3}\d{4}(?!\d)")
-_IBAN_RE = re.compile(r"\bKZ\d{2}[A-Z0-9]{16}\b", re.IGNORECASE)
+_IBAN_RE = re.compile(r"\bKZ\d{2}(?:\s?[A-Z0-9]{4}){4}\b", re.IGNORECASE)
 _KASPI_LINK_RE = re.compile(r"\b(?:https?://)?(?:pay\.)?kaspi\.(?:kz|me)/(?:pay/)?[\w\-/]+", re.IGNORECASE)
 _PROMO_RE = re.compile(r"(?:промокод\w*|promo\s*code|promokod\w*|промо)\s*[:\-]?\s*([A-Za-z0-9_]{4,20})", re.IGNORECASE)
 
@@ -49,10 +51,26 @@ def card_key(digits: str, hmac_key: bytes) -> str:
     return "card:" + hmac.new(hmac_key, digits.encode(), hashlib.sha256).hexdigest()[:32]
 
 
+def clean_digits(text: str) -> str:
+    """Убрать невидимые символы и перевести любые цифры Unicode (полноширинные, арабские) в ASCII.
+
+    Иначе «4400\u200b4301…» проходит мимо маскирования карты, а «+７ ７４７…» не распознаётся как телефон.
+    """
+    if not text.isascii():
+        text = "".join("" if unicodedata.category(ch) == "Cf" else
+                       str(unicodedata.digit(ch)) if ch.isdigit() and not ch.isascii() and unicodedata.digit(ch, None) is not None
+                       else ch for ch in text)
+    return text
+
+
 def redact_cards(text: str | None) -> str | None:
-    """Заменить номера карт (с верной контрольной суммой) маской 6+4 до записи в базу, экспорт или LLM."""
+    """Заменить номера карт (с верной контрольной суммой) маской 6+4 до записи в базу, экспорт или LLM.
+
+    Текст сначала проходит clean_digits: именно этот вид текста хранится и цитируется.
+    """
     if not text:
         return text
+    text = clean_digits(text)
 
     def mask(m: re.Match[str]) -> str:
         digits = re.sub(r"\D", "", m.group())
@@ -62,6 +80,8 @@ def redact_cards(text: str | None) -> str | None:
 
 
 def extract_requisites(text: str, hmac_key: bytes) -> list[Requisite]:
+    """Реквизиты из текста; позиции raw_span указывают в clean_digits(text)."""
+    text = clean_digits(text)
     found: list[Requisite] = []
     seen: set[str] = set()
 
@@ -78,7 +98,7 @@ def extract_requisites(text: str, hmac_key: bytes) -> list[Requisite]:
         if _luhn_ok(digits):
             add(Requisite("card", card_key(digits, hmac_key), f"{digits[:6]}******{digits[-4:]}", m.span()))
     for m in _IBAN_RE.finditer(text):
-        iban = m.group().upper()
+        iban = re.sub(r"\s", "", m.group()).upper()
         add(Requisite("iban", f"iban:{iban}", iban, m.span()))
     for m in _KASPI_LINK_RE.finditer(text):
         link = re.sub(r"^https?://", "", m.group().lower()).rstrip("/")

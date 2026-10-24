@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import sys
@@ -26,9 +27,64 @@ from pruf.config import Settings
 from pruf.detect.classifier import TrackClassifier
 from pruf.detect.detector import Detector, SourceText
 from pruf.detect.lexicon import TRACKS
+from pruf.detect.training import dev_paths
 from pruf.synth.generator import SynthPost, read_jsonl
 
 LEVELS_POS = {"medium": ("medium", "high"), "high": ("high",)}
+# Каждый слепой набор пишет отдельный агент без доступа к коду; на нём только измеряем. После отчёта набор
+# считается «потраченным»: он переходит в dev, его ошибки можно разбирать, а следующий раунд проверяется
+# на новом наборе. v1–v3 уже в dev; v4 опубликован в раунде 4, следующий раунд требует v5.
+BLIND_HISTORY = (
+    ("handwritten_blind (v1)", "раунд 1, первый замер", "0,913", "0,875", "0,125"),
+    ("handwritten_blind_v2", "раунд 2, до правок", "0,793", "0,639", "0,250"),
+    ("handwritten_blind_v2", "раунд 2, после правок по своему dev-набору", "0,765", "0,722", "0,333"),
+    ("handwritten_blind_v3", "код раунда 1 на этом наборе, для сравнения", "0,692", "0,450", "0,200"),
+    ("handwritten_blind_v3", "раунд 3, первый замер", "0,857", "0,750", "0,125"),
+    ("handwritten_blind_v4", "код до раунда 2, для сравнения", "0,761", "0,438", "0,138"),
+    ("handwritten_blind_v4", "код раунда 3, для сравнения", "0,852", "0,650", "0,113"),
+    ("handwritten_blind_v4", "раунд 4, первый замер", "0,969", "0,775", "0,025"),
+    ("handwritten_blind_v4", "раунд 4, после правила против маскировки «осторожно, мошенники» + реквизит", "0,954", "0,775", "0,037"),
+    ("handwritten_blind_v4", "раунд 4, после исправлений ревью (уклонения через вопрос, кавычки, «не переживайте»)", "0,939", "0,775", "0,050"),
+    ("handwritten_blind_v5", "код до раунда 2, для сравнения", "0,848", "0,433", "0,078"),
+    ("handwritten_blind_v5", "код раунда 4, для сравнения", "0,909", "0,667", "0,067"),
+    ("handwritten_blind_v5", "раунд 5, первый замер (после ревью)", "0,917", "0,733", "0,067"),
+    ("handwritten_blind_v6", "код до раунда 2, для сравнения", "0,840", "0,420", "0,080"),
+    ("handwritten_blind_v6", "код раунда 5, для сравнения", "0,907", "0,680", "0,070"),
+    ("handwritten_blind_v6", "раунд 6, первый замер (ML на ручной разметке + новые шаблоны)", "0,903", "0,840", "0,090"),
+    ("handwritten_blind_v7", "код до раунда 2, для сравнения", "0,792", "0,380", "0,100"),
+    ("handwritten_blind_v7", "код раунда 5, для сравнения", "0,853", "0,640", "0,110"),
+    ("handwritten_blind_v7", "код раунда 6, для сравнения", "0,886", "0,780", "0,100"),
+    ("handwritten_blind_v7", "раунд 7, первый замер (шаблоны по ошибкам v6 и ревью): прироста нет", "0,876", "0,780", "0,110"),
+    ("handwritten_blind_v7", "оценка: + LLM-арбитр в зоне 20–74 с вето только без контактов и просьб о деньгах, ответы записаны тем же промптом (scripts/llm_sim.py), нужен ANTHROPIC_API_KEY", "0,948", "0,920", "0,050"),
+    ("handwritten_blind_v8", "код до раунда 2, для сравнения", "0,708", "0,170", "0,070"),
+    ("handwritten_blind_v8", "код раунда 5, для сравнения", "0,738", "0,310", "0,110"),
+    ("handwritten_blind_v8", "код раунда 6, для сравнения", "0,918", "0,560", "0,050"),
+    ("handwritten_blind_v8", "раунд 8, первый замер: правила + ML (v7 в обучении)", "0,940", "0,630", "0,040"),
+    ("handwritten_blind_v8", "оценка: + LLM-арбитр с вето, ответы записаны тем же промптом (eval/llm_verdicts_v8.json)", "1,000", "0,890", "0,000"),
+    ("handwritten_blind_v9", "код до раунда 2, для сравнения", "0,794", "0,270", "0,070"),
+    ("handwritten_blind_v9", "код раунда 6, для сравнения", "0,869", "0,530", "0,080"),
+    ("handwritten_blind_v9", "раунд 8, первый замер: правила + ML (v8 в обучении)", "0,918", "0,670", "0,060"),
+    ("handwritten_blind_v9", "оценка: + LLM-арбитр с вето, ответы записаны тем же промптом (eval/llm_verdicts_v9.json)", "0,947", "0,890", "0,050"),
+    ("handwritten_blind_v10", "код до раунда 2, для сравнения", "0,781", "0,250", "0,070"),
+    ("handwritten_blind_v10", "код раунда 6, для сравнения", "0,883", "0,530", "0,070"),
+    ("handwritten_blind_v10", "код раунда 8 с моделью раунда 9, для сравнения", "0,928", "0,640", "0,050"),
+    ("handwritten_blind_v10", "раунд 9, первый замер: правила + ML, уверенная модель ставит «средний» со своими словами", "0,940", "0,780", "0,050"),
+    ("handwritten_blind_v10", "раунд 9 + живой LLM-арбитр (Sonnet 5.5, effort low, два прогона по 103 вызова)", "0,956", "0,860–0,870", "0,040"),
+    ("handwritten_blind_v11", "код раунда 9 со своей моделью, для сравнения", "0,942", "0,810", "0,050"),
+    ("handwritten_blind_v11", "раунд 10, первый замер: правила + ML", "0,944", "0,850", "0,050"),
+    ("handwritten_blind_v11", "раунд 10, только правила", "0,921", "0,580", "0,050"),
+)
+
+
+def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% доверительный интервал Уилсона для доли k из n: на 160 постах ±5–9 п.п. — это честнее точки."""
+    if n == 0:
+        return 0.0, 0.0
+    p = k / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return round(max(0.0, c - h), 3), round(min(1.0, c + h), 3)
 
 
 def metrics(rows: list[tuple[SynthPost, str, str | None]], min_level: str) -> dict:
@@ -100,7 +156,7 @@ def eval_full(posts: list[SynthPost], data_root: Path, model: Path | None) -> di
 
     tmp = Path(tempfile.mkdtemp(prefix="pruf_eval_"))
     try:
-        settings = Settings(data_dir=tmp, model_path=model or Path("/nonexistent"))
+        settings = Settings(data_dir=tmp, model_path=model or Path("/nonexistent"), anthropic_api_key="")
         pruf = Pruf(settings)
         rows = []
         started = time.time()
@@ -133,7 +189,10 @@ def to_markdown(report: dict) -> str:
     lines = ["# ПРУФ: метрики на синтетическом тесте", "",
              f"Датасет: {report['dataset']['posts']} постов, тест: {report['dataset']['test']} "
              f"({report['dataset']['test_labels']}). Разбиение по кампаниям, 1/4 шаблонов только в тесте.", "",
-             "Положительный прогноз: уровень «средний» или выше (строки ≥medium) либо только «высокий» (≥high).", ""]
+             "Положительный прогноз: уровень «средний» или выше (строки ≥medium) либо только «высокий» (≥high).", "",
+             "Наборы `dev:*` используются для настройки правил, поэтому цифры на них завышены. Наборы `blind:*` пишет "
+             "отдельный агент без доступа к коду, на них только измеряем; после публикации набор уходит в dev. "
+             "Главная цифра качества — слепой набор и таблица истории в конце.", ""]
     for mode, variants in report["results"].items():
         blocks = variants.items() if mode != "full" else [("full", variants)]
         for name, res in blocks:
@@ -147,7 +206,7 @@ def to_markdown(report: dict) -> str:
                     lines.append(f"| ≥{lvl} | {t} | {m['precision']} | {m['recall']} | {m['f1']} | |")
                 for lang, m in r["by_lang"].items():
                     lines.append(f"| ≥{lvl} | язык {lang} | {m['precision']} | {m['recall']} | {m['f1']} | {m.get('fpr', '')} |")
-            if mode == "handwritten_blind":
+            if mode.startswith("blind:"):
                 med = res["medium"]
                 lines += ["", "Ошибки на слепом наборе (≥medium), показаны как есть:"]
                 lines += [f"- ложное срабатывание: {t}" for t in med["false_positives"]]
@@ -157,6 +216,16 @@ def to_markdown(report: dict) -> str:
                 lines.append(f"\nПосты с изображениями (≥medium): precision {ip['precision']}, recall {ip['recall']}, FPR {ip.get('fpr')}.")
                 lines.append(f"Скорость полного пайплайна (с OCR): {res['throughput_posts_per_sec']} постов/с на 1 CPU.")
             lines.append("")
+    lines += ["## История слепых замеров (≥medium)", "", "| Набор | Когда | Precision | Recall | FPR |", "|---|---|---|---|---|"]
+    lines += [f"| {name} | {when} | {p} | {r} | {f} |" for name, when, p, r, f in BLIND_HISTORY]
+    for mode, variants in report["results"].items():
+        if mode.startswith("blind:"):
+            o = variants["rules+ml"]["medium"]["overall"]
+            ci = (wilson(o["tp"], o["tp"] + o["fp"]), wilson(o["tp"], o["tp"] + o["fn"]), wilson(o["fp"], o["fp"] + o["tn"]))
+            lines.append(f"| {mode[6:]} | сейчас | {o['precision']} ({ci[0][0]}–{ci[0][1]}) | {o['recall']} ({ci[1][0]}–{ci[1][1]}) "
+                         f"| {o['fpr']} ({ci[2][0]}–{ci[2][1]}) |")
+    lines += ["", "В скобках 95% интервал Уилсона.", ""]
+    lines.append("")
     lines += ["Синтетика сгенерирована нашим генератором, поэтому цифры оптимистичны; главное в них — FPR на "
               "трудных легальных примерах (бесплатные конкурсы, депозиты, предупреждения, личные переводы, сборы)."]
     return "\n".join(lines) + "\n"
@@ -167,24 +236,26 @@ def main() -> None:
     ap.add_argument("--data", type=Path, default=Path("data/synth/posts.jsonl"))
     ap.add_argument("--model", type=Path, default=Path("models/clf.joblib"))
     ap.add_argument("--mode", choices=["text", "full", "both"], default="both")
-    ap.add_argument("--handwritten", type=Path, default=Path("eval/handwritten.jsonl"),
-                    help="независимый ручной набор, не из генератора")
-    ap.add_argument("--blind", type=Path, default=Path("eval/handwritten_blind.jsonl"),
-                    help="слепой ручной набор: зафиксирован до настройки правил, на нём не настраиваемся")
+    ap.add_argument("--handwritten", type=Path, nargs="*",
+                    default=dev_paths(),
+                    help="ручные dev-наборы, не из генератора: на них правила настраиваются")
+    ap.add_argument("--blind", type=Path, nargs="*",
+                    default=[Path("eval/handwritten_blind_v11.jsonl")],
+                    help="слепые наборы: написаны до правок агентом без доступа к коду, на них только измеряем")
     ap.add_argument("--report", type=Path, default=Path("reports/eval.json"))
     ap.add_argument("--markdown", type=Path, default=Path("docs/metrics.md"))
     args = ap.parse_args()
     posts = read_jsonl(args.data)
     test = [p for p in posts if p.split == "test"]
-    settings = Settings(model_path=args.model)
+    settings = Settings(model_path=args.model, anthropic_api_key="")  # eval не тратит API: арбитра меряет llm_sim.py
     report = {"dataset": {"posts": len(posts), "test": len(test), "test_labels": dict(Counter(p.label for p in test))},
               "results": {}}
     if args.mode in ("text", "both"):
         report["results"]["text"] = eval_text(posts, settings, args.model)
-    if args.handwritten.exists():
-        report["results"]["handwritten"] = eval_text(load_handwritten(args.handwritten), settings, args.model)
-    if args.blind.exists():
-        report["results"]["handwritten_blind"] = eval_text(load_handwritten(args.blind), settings, args.model)
+    for kind, paths in (("dev", args.handwritten), ("blind", args.blind)):
+        for path in paths:
+            if path.exists():
+                report["results"][f"{kind}:{path.stem}"] = eval_text(load_handwritten(path), settings, args.model)
     if args.mode in ("full", "both"):
         report["results"]["full"] = eval_full(posts, args.data.parent, args.model)
     args.report.parent.mkdir(parents=True, exist_ok=True)

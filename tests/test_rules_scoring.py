@@ -10,6 +10,9 @@ from pruf.detect.rules import find_features
 from pruf.models import HIGH_THRESHOLD, MEDIUM_THRESHOLD, Evidence, level_for
 from pruf.normalize.text import normalize_text
 from pruf.scoring import (
+    LLM_LEGIT,
+    ML_ALONE,
+    ML_ALONE_SCORE,
     ML_ONLY_CAP,
     NO_COMBO_CAP,
     STOP_CAP,
@@ -267,12 +270,35 @@ def test_context_without_own_features_cannot_reach_high() -> None:
     assert result.level == "medium"
 
 
-def test_ml_alone_stays_below_medium() -> None:
+def test_unsure_ml_alone_stays_below_medium() -> None:
+    # Act
+    result = score_track("pyramid", [], {"pyramid": ML_ALONE - 0.05, "legit": 1 - ML_ALONE + 0.05}, [])
+
+    # Assert: неуверенная модель без признаков не ставит пост в очередь аналитика
+    assert result.score <= ML_ONLY_CAP
+    assert result.level == "low"
+
+
+def test_confident_ml_alone_reaches_medium_for_manual_review() -> None:
     # Act
     result = score_track("pyramid", [], {"pyramid": 0.99, "legit": 0.01}, [])
 
-    # Assert: модель без признаков не ставит пост в очередь аналитика
-    assert result.score == ML_ONLY_CAP
+    # Assert: только «средний», с причиной в сводке
+    assert result.score == ML_ALONE_SCORE
+    assert result.level == "medium"
+    assert result.capped_reason is not None
+
+
+@pytest.mark.parametrize("blocker", [
+    ev("common.awareness", "common", 0),
+    ev("lottery.legal_free", "pyramid", -10, stop=True),
+    ev(LLM_LEGIT, "common", 0, source="llm"),
+])
+def test_confident_ml_alone_yields_to_warning_stop_or_llm_veto(blocker: Evidence) -> None:
+    # Act
+    result = score_track("pyramid", [blocker], {"pyramid": 0.99, "legit": 0.01}, [])
+
+    # Assert
     assert result.level == "low"
 
 
@@ -322,7 +348,7 @@ def test_negative_points_floor_at_zero() -> None:
 def test_combine_picks_top_track_and_filters_evidence() -> None:
     # Arrange
     evidence = [ev("casino.terms", "casino", 30, core=True), ev("casino.mirror", "casino", 30, core=True),
-                ev("lottery.prize", "lottery", 5, core=True), ev("pyramid.awareness", "pyramid", -35, stop=True)]
+                ev("lottery.prize", "lottery", 5, core=True), ev("pyramid.bank_product", "pyramid", -35, stop=True)]
 
     # Act
     analysis = combine(evidence, requisites=({"kind": "phone"},), links=({"url": "x"},))
@@ -331,8 +357,8 @@ def test_combine_picks_top_track_and_filters_evidence() -> None:
     assert analysis.track == "casino"
     ids = [e.feature_id for e in analysis.evidence]
     assert "lottery.prize" not in ids
-    assert "pyramid.awareness" in ids  # стоп-признаки показываются всегда
-    assert ids[0] == "pyramid.awareness"  # сортировка по |весу|
+    assert "pyramid.bank_product" in ids  # стоп-признаки показываются всегда
+    assert ids[0] == "pyramid.bank_product"  # сортировка по |весу|
     data = analysis.to_dict()
     assert data["level_label"] == "высокий"
     assert data["requisites"] == ({"kind": "phone"},) or data["requisites"] == [{"kind": "phone"}]
@@ -340,3 +366,50 @@ def test_combine_picks_top_track_and_filters_evidence() -> None:
 
 def test_summarize_low_without_stop_features() -> None:
     assert summarize("low", None, []) == "Существенных признаков схем не найдено."
+
+
+def test_warning_on_one_track_caps_every_track_without_money_request_or_contact() -> None:
+    # Arrange: расследование о казино: новостная рамка без реквизита и ссылки
+    evidence = [ev("casino.terms", "casino", 40, core=True), ev("casino.mirror", "casino", 40, core=True),
+                ev("casino.bonus", "casino", 30), ev("common.news.awareness", "common", -45, stop=True),
+                ev("common.news.awareness", "common", -45, stop=True)]
+
+    # Act
+    analysis = combine(evidence)
+
+    # Assert
+    casino = next(t for t in analysis.tracks if t.track == "casino")
+    assert analysis.level == "low"
+    assert casino.capped_reason == "похоже на предупреждение или новость о схеме"
+
+
+def test_single_news_word_in_an_ad_does_not_drop_it_to_low() -> None:
+    # Arrange: «Сотында бәрі дәлелденді» дописано к рекламе с двумя ядровыми признаками
+    evidence = [ev("pyramid.entry", "pyramid", 22, core=True), ev("pyramid.high_return", "pyramid", 24, core=True),
+                ev("pyramid.referral", "pyramid", 26, core=True), ev("common.news.awareness", "common", -45, stop=True)]
+
+    # Act
+    analysis = combine(evidence)
+
+    # Assert
+    assert analysis.level != "low"
+    assert analysis.track == "pyramid"
+
+
+def test_warning_with_requisite_keeps_medium_cap_only() -> None:
+    # Arrange: «осторожно, мошенники» в рекламе с номером для перевода остаётся в очереди
+    evidence = [ev("casino.terms", "casino", 22, core=True), ev("casino.mirror", "casino", 22, core=True),
+                ev("casino.bonus", "casino", 16), ev("common.requisite", "common", 6),
+                ev("casino.awareness", "casino", -45, stop=True)]
+
+    # Act / Assert
+    assert combine(evidence).level == "medium"
+
+
+def test_casino_specific_awareness_does_not_cap_other_tracks() -> None:
+    # Arrange: «подпольные казино — зло» в посте с платным розыгрышем
+    evidence = [ev("lottery.prize", "lottery", 14, core=True), ev("lottery.entry_fee", "lottery", 30, core=True),
+                ev("common.kaspi_transfer", "common", 14), ev("casino.awareness", "casino", -45, stop=True)]
+
+    # Act / Assert
+    assert combine(evidence).track == "lottery" and combine(evidence).level == "high"

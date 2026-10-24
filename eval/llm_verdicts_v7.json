@@ -1,0 +1,956 @@
+{
+ "b7_004": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "выигрыш в краш-игре",
+    "quote": "закинул 5k и забрал x47 на самолётике"
+   },
+   {
+    "track": "casino",
+    "label": "ссылка в личке",
+    "quote": "Link керек болса DM-ге жаз"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_005": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_006": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "покупка пакетов заданий",
+    "quote": "келесі tasks үшін пакет сатып аласың"
+   },
+   {
+    "track": "pyramid",
+    "label": "нереальный доход",
+    "quote": "получай 30k в день"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_013": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "зеркало сайта",
+    "quote": "Зеркало жаңартылды"
+   },
+   {
+    "track": "casino",
+    "label": "бонус на депозит",
+    "quote": "Бонус +300% бірінші толтыруға"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_015": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "выигрыш в слотах",
+    "quote": "Мен бүгін 1000-нан 89 000 ұттым"
+   },
+   {
+    "track": "casino",
+    "label": "промокод на фриспины",
+    "quote": "SULU промокодын жазсаңыз 100 тегін айналым береді"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_019": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "платные прогнозы на ставки",
+    "quote": "VIP signals for KPL & EPL"
+   },
+   {
+    "track": "casino",
+    "label": "подписка на прогнозы",
+    "quote": "Подписка 12k тг/айына"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_021": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "схема в казино-игре",
+    "quote": "в игре с курочкой нужно пройти 5 полос"
+   },
+   {
+    "track": "casino",
+    "label": "ссылка на игру",
+    "quote": "ссылка на игру в профиле"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_022": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый выигрыш",
+    "quote": "попали в число 5 счастливчиков"
+   },
+   {
+    "track": "lottery",
+    "label": "оплата за доставку приза",
+    "quote": "Осталось оплатить упаковку и отправку через Казпочту, 3 200 тенге"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_023": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "платные пакеты",
+    "quote": "Старт пакет 59 000 тг, бизнес пакет 220 000 тг"
+   },
+   {
+    "track": "pyramid",
+    "label": "пассивный доход от структуры",
+    "quote": "Бірінші желіден айына 300 мыңнан пассивті табыс"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_024": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый выигрыш",
+    "quote": "ұтыс ойынында жеңімпаз атандыңыз"
+   },
+   {
+    "track": "lottery",
+    "label": "запрос данных карты",
+    "quote": "картаңыздың нөмірі мен артындағы 3 санды жіберіңіз"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_026": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_027": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_030": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "экспресс-прогноз",
+    "quote": "Экспресс дня"
+   },
+   {
+    "track": "casino",
+    "label": "платный VIP-канал",
+    "quote": "VIP-доступ 15 000 ₸/месяц"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_032": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "договорные матчи",
+    "quote": "келісілген ойындар бар"
+   },
+   {
+    "track": "casino",
+    "label": "платный прогноз",
+    "quote": "Бір болжам 25 мың, коэф 10-нан жоғары"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_033": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_034": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_035": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "экспресс-прогноз",
+    "quote": "Bugin ekspress"
+   },
+   {
+    "track": "casino",
+    "label": "платный VIP-канал",
+    "quote": "VIP 7000 tg aiyna"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_040": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_042": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_043": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность",
+    "quote": "Profit 6% за круг, 3 круга в день"
+   },
+   {
+    "track": "pyramid",
+    "label": "внесение депозита",
+    "quote": "сен тек деп саласың"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_047": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_049": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "выигрыш в игре",
+    "quote": "закинула 5к ради интереса, сегодня вывела 187 000 на Каспи"
+   },
+   {
+    "track": "casino",
+    "label": "ссылка на игру",
+    "quote": "Кто хочет ссылку на игру"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_050": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "схема в казино-игре",
+    "quote": "Mines ойынының схемасы"
+   },
+   {
+    "track": "casino",
+    "label": "выигрыш",
+    "quote": "Мен осылай бір кеште 120 мың таптым"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_053": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "повтор ставок",
+    "quote": "просто повторять ставки за нашим аналитиком"
+   },
+   {
+    "track": "casino",
+    "label": "стартовый депозит",
+    "quote": "нужен только стартовый депозит"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_054": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_055": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "сигналы для краш-игры",
+    "quote": "Signaly LJ besplatno"
+   },
+   {
+    "track": "casino",
+    "label": "депозит",
+    "quote": "depozit ot 2000 tg"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_059": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "пополнение баланса для заданий",
+    "quote": "баланс 30 000 тг-ден толтыру керек, кейін пайызымен қайтады"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_060": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "скрытая реклама приложения",
+    "quote": "Нашёл приложение, где реально выводят деньги"
+   },
+   {
+    "track": "casino",
+    "label": "ссылка",
+    "quote": "ссылка закреплена"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_061": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_062": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "заработок на играх",
+    "quote": "Ойын ойнап табасыз, шығару Каспиге"
+   },
+   {
+    "track": "casino",
+    "label": "нереальный доход",
+    "quote": "Үйде отырып күніне 20-30 мың табуға болады"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_063": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "оплата за доставку приза",
+    "quote": "сыйлықты алу үшін тек доставка мен упаковка 3 мың тг"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_064": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "высокая доходность",
+    "quote": "под 8% ежемесячно с ежедневным начислением"
+   },
+   {
+    "track": "pyramid",
+    "label": "вознаграждение за привлечение",
+    "quote": "5% агентского вознаграждения за каждого приведённого вкладчика"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_067": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_069": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_074": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "пополнение баланса для заданий",
+    "quote": "Dlya VIP zadaniy nuzhno popolnit balans ot 25k"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_078": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платный билет",
+    "quote": "Әр билет 2 000 ₸, бас жүлде — пәтер"
+   },
+   {
+    "track": "lottery",
+    "label": "продажа через WhatsApp",
+    "quote": "Билетті тек WhatsApp арқылы сатып аласыз"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_079": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "оплата налога за выигрыш",
+    "quote": "Тек салығын 9 мың төледім, бүгін 400 мың түсті"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_080": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый выигрыш",
+    "quote": "выиграл в акции оператора"
+   },
+   {
+    "track": "lottery",
+    "label": "запрос SMS-кода",
+    "quote": "продиктуйте оператору код, который придёт по SMS"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_085": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность",
+    "quote": "dohod 5% v den"
+   },
+   {
+    "track": "pyramid",
+    "label": "бонус за друзей",
+    "quote": "Za kazhdogo druga +10%"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_088": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платная коробка-сюрприз",
+    "quote": "коробка-сюрприз от «Apple Store Казахстан» всего за 1990 ₸"
+   },
+   {
+    "track": "lottery",
+    "label": "случайный приз",
+    "quote": "В каждой третьей коробке iPhone"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_089": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "предсказание раунда",
+    "quote": "есть алгоритм, который предсказывает раунд"
+   },
+   {
+    "track": "casino",
+    "label": "продажа скрипта",
+    "quote": "Скрипт продаю за 25 000 ₸"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_090": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_091": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_098": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_101": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_104": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "колесо с пополнением",
+    "quote": "Пополняешь от 1000 тенге, крутишь к-о-л-е-с-о"
+   },
+   {
+    "track": "casino",
+    "label": "без верификации",
+    "quote": "Без верификации, без паспорта"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_106": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый выигрыш",
+    "quote": "маркетплейс ұтысы бойынша сізге 120 000 бонус берілді"
+   },
+   {
+    "track": "lottery",
+    "label": "запрос SMS-кода",
+    "quote": "смс-кодты осы чатқа жазыңыз"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_107": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "слоты",
+    "quote": "Слоты с отдачей 98%"
+   },
+   {
+    "track": "casino",
+    "label": "вывод без блокировок",
+    "quote": "вывод на Kaspi и Halyk, никаких блокировок"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_109": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_110": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_111": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "зеркало сайта",
+    "quote": "Рабочее зеркало на сегодня"
+   },
+   {
+    "track": "casino",
+    "label": "бонус на депозит",
+    "quote": "Промокод KZ2026 даёт +500% к первому деп0зиту"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_113": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "тарифы с ежедневной доходностью",
+    "quote": "Тариф Silver 30 000 ₸ → 1 800 ₸ ежедневно"
+   },
+   {
+    "track": "pyramid",
+    "label": "срочность входа",
+    "quote": "Новый пр0ект только стартовал"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_114": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_121": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "пополнение баланса для заданий",
+    "quote": "Чтобы открыть задания VIP-уровня нужно пополнить баланс от 20 000"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_122": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_123": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_124": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "договорные матчи",
+    "quote": "Договорные матчи"
+   },
+   {
+    "track": "casino",
+    "label": "платный прогноз",
+    "quote": "Цена прогноза 30 000 ₸, оплата строго до матча"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_125": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "привлечение друзей",
+    "quote": "Секрет простой: реинвестировать прибыль и звать друзей"
+   },
+   {
+    "track": "pyramid",
+    "label": "ограниченный набор",
+    "quote": "остались 3 места"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_126": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "заработок на играх",
+    "quote": "Tek oiyn oinaisyn, akshany kaspi-ge shygarasyn"
+   },
+   {
+    "track": "casino",
+    "label": "стартовый баланс",
+    "quote": "Starttyk balans 1000 tg"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_127": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_130": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый выигрыш",
+    "quote": "Sen 3 zhenimpazdyn birisin"
+   },
+   {
+    "track": "lottery",
+    "label": "оплата налога за приз",
+    "quote": "tek salyk 15 myn tg tolep"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_133": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "платный VIP-канал прогнозов",
+    "quote": "Біздің VIP каналда күн сайын 3-4 болжам, айына 10 000 тг"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_135": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность",
+    "quote": "Связка даёт 5–7% за круг"
+   },
+   {
+    "track": "pyramid",
+    "label": "депозит в пул",
+    "quote": "вы только вносите депозит в наш пул от 300$"
+   },
+   {
+    "track": "pyramid",
+    "label": "без рисков",
+    "quote": "Без рисков"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_136": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "бонус на игру",
+    "quote": "Даю 3000 ₸ на старт за свой счёт, всё что выиграете — ваше"
+   },
+   {
+    "track": "casino",
+    "label": "вывод на карту",
+    "quote": "карта Kaspi для вывода"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_137": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый выигрыш",
+    "quote": "You won 300 000 KZT from our charity draw"
+   },
+   {
+    "track": "lottery",
+    "label": "оплата за получение",
+    "quote": "verification fee 4 900 ₸ төлеңіз"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_140": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платный номер",
+    "quote": "Покупаешь номер за 500 ₸"
+   },
+   {
+    "track": "lottery",
+    "label": "банк из взносов",
+    "quote": "победитель забирает 70% банка"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_142": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_143": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "покупка пакетов заданий",
+    "quote": "дальше покупаешь пакет заданий, комиссия возвращается после выполнения"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_144": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_145": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность",
+    "quote": "біздің клуб аптасына 12%"
+   },
+   {
+    "track": "pyramid",
+    "label": "торговый робот",
+    "quote": "Робот биржада өзі сауда жасайды"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_146": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "оплата за получение выплаты",
+    "quote": "нужно было только оплатить страховку перевода 7 500"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_147": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность",
+    "quote": "наш клуб — 15% в неделю"
+   },
+   {
+    "track": "pyramid",
+    "label": "торговый робот",
+    "quote": "Робот торгует на бирже сам"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_149": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "удвоение средств",
+    "quote": "100 USDT жіберсеңіз, 48 сағатта 200 USDT қайтады"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_150": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_152": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "инсайд на исход",
+    "quote": "инсайд из лагеря"
+   },
+   {
+    "track": "casino",
+    "label": "ставки через бота",
+    "quote": "Ставки через @kz_insaid_bot, там же бонус на первый депозит"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_159": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_165": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "взнос и приглашение",
+    "quote": "100 myn syilap kiresiz, 2 adam shakyrasyz, 1 aidan kein 800 myn alasyz"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_166": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_168": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "договорные матчи",
+    "quote": "Dogovornye matchi 100%"
+   },
+   {
+    "track": "casino",
+    "label": "платный прогноз",
+    "quote": "Oplata 40k, prognoz srazu posle oplaty"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_170": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_172": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_173": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_174": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_175": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "удвоение средств",
+    "quote": "Удвоение USDT за 48 часов"
+   },
+   {
+    "track": "pyramid",
+    "label": "автовозврат x2",
+    "quote": "бот автоматически возвращает x2"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_180": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый выигрыш",
+    "quote": "Сіз біздің дүкеннің 1000-шы клиенті болдыңыз"
+   },
+   {
+    "track": "lottery",
+    "label": "оплата доставки приза",
+    "quote": "Жеткізу ақысын 6 500 тг төлесеңіз"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_181": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_182": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый выигрыш",
+    "quote": "По итогам акции вам достаётся автомобиль Chery Tiggo 7"
+   },
+   {
+    "track": "lottery",
+    "label": "оплата за переоформление",
+    "quote": "необходимо оплатить нотариальные услуги 35 000 ₸"
+   }
+  ],
+  "legit_context": false
+ },
+ "b7_183": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_184": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_188": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_189": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_190": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_192": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_193": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_195": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_198": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b7_200": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "оплата налога на выигрыш",
+    "quote": "нужно оплатить только налог на выигрыш 12%"
+   }
+  ],
+  "legit_context": false
+ }
+}

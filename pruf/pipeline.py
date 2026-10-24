@@ -12,7 +12,7 @@ from pruf.config import Settings
 from pruf.detect.detector import Detector, SourceText
 from pruf.models import Evidence
 from pruf.normalize.audio import transcribe
-from pruf.normalize.links import Link
+from pruf.normalize.links import ALLOWLIST_DOMAINS, Link
 from pruf.normalize.requisites import redact_cards
 from pruf.normalize.text import normalize_text
 from pruf.registry.hashing import open_image
@@ -28,10 +28,6 @@ from pruf.storage.db import Database
 log = logging.getLogger(__name__)
 RISKY_LEVELS = ("medium", "high")
 # Бренды и площадки: их домены и логотипы повторяются легально и не связывают кейсы.
-ALLOWLIST_DOMAINS = frozenset({
-    "kaspi.kz", "halykbank.kz", "egov.kz", "gov.kz", "nationalbank.kz", "instagram.com", "t.me", "telegram.me",
-    "wa.me", "chat.whatsapp.com", "tiktok.com", "youtube.com", "youtu.be", "vk.com", "google.com", "2gis.kz",
-})
 REUSED_PROOF_WEIGHT = 20
 REUSED_PROOF_STEP = 5  # за каждый следующий рискованный пост с тем же пруфом, до +20
 EDITED_DIGITS_WEIGHT = 20
@@ -147,55 +143,67 @@ class Pruf:
     def ingest(self, sub: Submission) -> dict[str, Any]:
         # Сначала проверяем файлы, чтобы битая картинка не оставила пустой пост.
         images = [(up, open_image(up.data)) for up in sub.uploads if up.kind == "image"]
+        # Медленное (OCR, Whisper, LLM) идёт вне общей блокировки: под ней только запись в реестр
+        # и чтение контекста, поэтому параллельные загрузки не выстраиваются в очередь за OCR.
+        ocr = [self.registry.read_ocr(img) for _, img in images]
+        transcript, voice_failed = self._transcribe(sub)
         with self._ingest_lock:
             post_id = self.db.create_post(source=sub.source, channel=sub.channel, author=sub.author,
                                           posted_at=sub.posted_at, text=redact_cards(sub.text),
                                           external_id=sub.external_id, label=sub.label)
-            try:
-                return self._process(post_id, sub, images)
-            except Exception as exc:
-                self.db.mark_post_failed(post_id, type(exc).__name__)
-                raise
+        try:
+            return self._process(post_id, sub, images, ocr, transcript, voice_failed)
+        except Exception as exc:
+            self.db.mark_post_failed(post_id, type(exc).__name__)
+            raise
 
-    def _process(self, post_id: int, sub: Submission, images: list) -> dict[str, Any]:
+    def _transcribe(self, sub: Submission) -> tuple[str | None, bool]:
+        if sub.transcript:
+            return sub.transcript, False
+        audio = next((up for up in sub.uploads if up.kind == "audio"), None)
+        if audio is None:
+            return None, False
+        transcript = transcribe(audio.data, "." + audio.ext)
+        return transcript, transcript is None
+
+    def _process(self, post_id: int, sub: Submission, images: list, ocr: list, transcript: str | None,
+                 voice_failed: bool) -> dict[str, Any]:
         got = _Collected()
         degraded: list[dict[str, str]] = []
-        transcript = sub.transcript
-        for up, img in images:
-            got.images.append(self.registry.register_image(post_id, up.data, img=img))
-        for up in sub.uploads:
-            if up.kind != "audio":
-                continue
-            _aid, same = self.registry.register_audio(post_id, up.data, up.ext)
-            got.audio_posts.extend(same)
-            if not transcript:
-                transcript = transcribe(up.data, "." + up.ext)
-                if transcript is None:
-                    degraded.append({"component": "whisper", "reason": "голосовое не расшифровано: Whisper недоступен"})
+        if voice_failed:
+            degraded.append({"component": "whisper", "reason": "голосовое не расшифровано: Whisper недоступен"})
+        with self._ingest_lock:
+            for (up, img), (tokens, ocr_ok) in zip(images, ocr):
+                result = self.registry.register_image(post_id, up.data, ocr_tokens=tokens, img=img)
+                result.ocr_ok = ocr_ok
+                got.images.append(result)
+            for up in sub.uploads:
+                if up.kind == "audio":
+                    got.audio_posts.extend(self.registry.register_audio(post_id, up.data, up.ext)[1])
+            if sub.text:
+                text_res = self.registry.register_text(post_id, normalize_text(redact_cards(sub.text) or "").folded)
+                if text_res:
+                    got.texts.append(text_res)
+            ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
+            sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""), SourceText("voice", transcript or "")]
+            first = self.detector.detect(sources, allow_llm=False)
+            for r in first.requisites:
+                self.db.link_requisite(post_id, r.kind, r.key, r.display)
+            for link in first.links:
+                if _links_cases(link):
+                    self.db.add_link(post_id, link.url, link.domain, link.resolved)
+            context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
         if any(not r.ocr_ok for r in got.images):
             degraded.append({"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"})
-        if sub.text:
-            text_res = self.registry.register_text(post_id, normalize_text(redact_cards(sub.text) or "").folded)
-            if text_res:
-                got.texts.append(text_res)
-        ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
-        sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""), SourceText("voice", transcript or "")]
-
-        first = self.detector.detect(sources, allow_llm=False)
-        for r in first.requisites:
-            self.db.link_requisite(post_id, r.kind, r.key, r.display)
-        for link in first.links:
-            if _links_cases(link):
-                self.db.add_link(post_id, link.url, link.domain, link.resolved)
-        context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
-        analysis = self.detector.detect(sources, context).analysis
+        analysis = self.detector.detect(sources, context).analysis  # может звать LLM: вне блокировки
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))
-        self.db.update_post_analysis(post_id, score=analysis.score, level=analysis.level, track=analysis.track,
-                                     analysis=analysis.to_dict(), ocr_text=redact_cards(ocr_text),
-                                     transcript=redact_cards(transcript))
-        self.version += 1
+        with self._ingest_lock:
+            self.db.update_post_analysis(post_id, score=analysis.score, level=analysis.level, track=analysis.track,
+                                         analysis=analysis.to_dict(), ocr_text=redact_cards(ocr_text),
+                                         transcript=redact_cards(transcript))
+            self.version += 1
         return {
             "post_id": post_id,
             "analysis": analysis.to_dict(),
@@ -227,8 +235,13 @@ class Pruf:
         ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or ""
         sources = [SourceText("text", text or ""), SourceText("ocr", ocr_text), SourceText("voice", transcript or "")]
         first = self.detector.detect(sources, allow_llm=False)
-        context = self._proof_context(got) + self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
-        analysis = self.detector.detect(sources, context).analysis
+        context = self._proof_context(got)
+        # Анонимный бот не отвечает «есть ли этот номер в базе» на голый реквизит: иначе мошенник
+        # проверяет, засвечена ли его карта. Контекст реестра по реквизитам только если сам текст
+        # уже даёт средний риск. LLM для анонимов выключен: иначе любой может тратить бюджет API.
+        if not public or first.analysis.level in RISKY_LEVELS:
+            context += self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
+        analysis = self.detector.detect(sources, context, allow_llm=not public).analysis
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))

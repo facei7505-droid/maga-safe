@@ -146,7 +146,7 @@ def _detector(tmp_path: Path, llm=None, classifier=None) -> Detector:
     return Detector(make_settings(tmp_path), classifier=classifier, llm=llm)
 
 
-def test_llm_is_consulted_only_in_medium_band(tmp_path: Path) -> None:
+def test_llm_is_consulted_only_in_gray_zone(tmp_path: Path) -> None:
     # Arrange
     llm = FakeLlm(LlmVerdict(evidence=(), legit_context=False))
     det = _detector(tmp_path, llm=llm)
@@ -179,17 +179,34 @@ def test_llm_signal_with_verbatim_quote_raises_score(tmp_path: Path) -> None:
     assert base.llm_status == "off"
 
 
-def test_llm_legit_opinion_is_only_a_note(tmp_path: Path) -> None:
+LEGIT_FEE_TEXT = "Дарим сертификат победителю конкурса рисунков! Участие 500 тг за материалы, итоги в пятницу"
+
+
+def test_llm_legit_opinion_caps_post_without_requisites(tmp_path: Path) -> None:
     # Arrange
-    base = _detector(tmp_path).detect([SourceText("text", MEDIUM_TEXT)]).analysis
+    base = _detector(tmp_path).detect([SourceText("text", LEGIT_FEE_TEXT)]).analysis
     det = _detector(tmp_path, llm=FakeLlm(LlmVerdict(evidence=(), legit_context=True)))
 
     # Act
-    analysis = det.detect([SourceText("text", MEDIUM_TEXT)]).analysis
+    analysis = det.detect([SourceText("text", LEGIT_FEE_TEXT)]).analysis
 
-    # Assert: текст поста недоверенный, «это легально» от LLM балл не снижает
-    assert analysis.score == base.score
+    # Assert
+    assert base.level != "low"
+    assert analysis.level == "low"
     assert any(e.source == "llm" for e in analysis.evidence)
+
+
+def test_llm_legit_opinion_does_not_lower_post_with_requisite(tmp_path: Path) -> None:
+    # Arrange: текст недоверенный, при реквизите «это легально» от LLM балл не снижает
+    text = "Розыгрыш iPhone! Участие 2000 тг, переводите на Kaspi +7 701 234 56 78"
+    base = _detector(tmp_path).detect([SourceText("text", text)], allow_llm=False).analysis
+    det = _detector(tmp_path, llm=FakeLlm(LlmVerdict(evidence=(), legit_context=True)))
+
+    # Act
+    analysis = det.detect([SourceText("text", text)]).analysis
+
+    # Assert
+    assert analysis.score == base.score
 
 
 def test_llm_failure_is_reported_in_status(tmp_path: Path) -> None:
@@ -362,3 +379,55 @@ def test_detector_loads_classifier_from_model_path(classifier: TrackClassifier, 
 
     # Assert
     assert det.has_classifier
+
+
+def test_review_caches_repeated_text_and_respects_daily_budget() -> None:
+    # Arrange
+    arbiter, messages = _arbiter(_response('{"signals": [], "legit_context": false}'))
+    arbiter._daily_budget = 2
+
+    # Act
+    first = arbiter.review("пост один")
+    again = arbiter.review("пост один")
+    second = arbiter.review("пост два")
+    over_budget = arbiter.review("пост три")
+
+    # Assert
+    assert first is not None and again == first and second is not None
+    assert len(messages.calls) == 2
+    assert over_budget is None
+    assert arbiter.stats()["last_error"] == "daily_budget"
+
+
+@pytest.mark.parametrize("contact", [
+    " Подробнее: mega-win.top",
+    " Пиши в лс",
+    " Админ @best_bonus_kz",
+    " Звони 8 7 0 1 2 3 4 5 6 7 8",
+    " Кидай на каспи",
+])
+def test_llm_legit_opinion_does_not_lower_post_with_any_contact(tmp_path: Path, contact: str) -> None:
+    # Arrange
+    text = LEGIT_FEE_TEXT + contact
+    base = _detector(tmp_path).detect([SourceText("text", text)], allow_llm=False).analysis
+    det = _detector(tmp_path, llm=FakeLlm(LlmVerdict(evidence=(), legit_context=True)))
+
+    # Act
+    analysis = det.detect([SourceText("text", text)]).analysis
+
+    # Assert
+    assert base.level != "low"
+    assert analysis.score == base.score
+
+
+def test_llm_legit_opinion_does_not_lower_truncated_post(tmp_path: Path) -> None:
+    # Arrange: арбитр видит только начало длинного поста
+    text = "Обычный пост про погоду. " * 200 + LEGIT_FEE_TEXT
+    base = _detector(tmp_path).detect([SourceText("text", text)], allow_llm=False).analysis
+    det = _detector(tmp_path, llm=FakeLlm(LlmVerdict(evidence=(), legit_context=True)))
+
+    # Act
+    analysis = det.detect([SourceText("text", text)]).analysis
+
+    # Assert
+    assert analysis.score == base.score
