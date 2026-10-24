@@ -6,7 +6,7 @@
 
 ![Обзор: поток постов, ранние сигналы, динамика по дням](docs/img/overview.png)
 
-**Демо-видео (3 минуты, без звука):** [docs/demo/pruf-demo.mp4](docs/demo/pruf-demo.mp4) · [сценарий озвучки](docs/demo/voiceover.md)
+**Демо-видео (3 минуты, с озвучкой):** [docs/demo/pruf-demo-voice.mp4](docs/demo/pruf-demo-voice.mp4) · [без звука](docs/demo/pruf-demo.mp4) · [сценарий озвучки](docs/demo/voiceover.md)
 
 ## Зачем
 
