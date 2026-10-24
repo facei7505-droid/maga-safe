@@ -75,7 +75,7 @@ def render() -> str:
         lines.append(f"| `{f.id}` | {track} | {f.label} | {f.weight:+g} | {_kind(f)} | {len(f.patterns)} |")
     for fid, track, label, weight, kind in LINK_FEATURES:
         lines.append(f"| `{fid}` | {TRACK_LABELS.get(track, 'общий')} | {label} | {weight:+g} | {kind} | по ссылкам и реквизитам |")
-    detector = Detector(Settings(model_path=Path("/nonexistent")))
+    detector = Detector(Settings(model_path=Path("/nonexistent"), anthropic_api_key=""))
     lines += ["", "## Пример: схема", ""] + _example(detector, EXAMPLE)
     lines += ["## Пример: предупреждение с той же фразой", ""] + _example(detector, WARNING)
     lines += ["Нормализация перед поиском: NFKC, нижний регистр, латинские двойники и цифры вместо букв, транслит, "

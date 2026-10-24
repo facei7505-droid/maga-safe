@@ -54,12 +54,12 @@ def test_round10_legit_posts_stay_low(detector: Detector, text: str) -> None:
     assert analysis.level == "low", (analysis.score, [e.feature_id for e in analysis.evidence])
 
 
-def test_quoted_scam_sms_is_not_the_authors_ask() -> None:
-    # Act: просьба «оплатите» стоит в кавычках — это цитата пришедшего смс
-    found = _features("Мне сегодня пришло смс «Ваш номер выиграл 500 000 тг, для получения оплатите комиссию». Банки так не делают!")
+def test_retold_sms_without_warning_is_not_a_warning(detector: Detector) -> None:
+    # Act: «мне пришло сообщение «…». Повезло!» — пересказ без предупреждения, кавычки не прячут просьбу
+    analysis = _analyze(detector, "Мне сегодня пришло сообщение «Ваш номер выиграл 500 000 тг! Для получения оплатите комиссию 3 000 тг, пишите в лс». Повезло!")
 
     # Assert
-    assert "common.author_ask" not in found
+    assert analysis.level in ("medium", "high"), (analysis.score, [e.feature_id for e in analysis.evidence])
 
 
 def test_unquoted_ask_still_counts_as_authors_ask() -> None:
@@ -85,3 +85,45 @@ def test_bank_style_warning_does_not_hide_a_payout_card_ask(detector: Detector) 
 
     # Assert
     assert analysis.level in ("medium", "high"), (analysis.score, [e.feature_id for e in analysis.evidence])
+
+
+@pytest.mark.parametrize("text", [
+    # ревью раунда 10: рекламные фразы не должны работать как предупреждение
+    "Никакие банки не дадут 30% в месяц, а наш проект даёт! Вход от 20 000 тг",
+    "Банки так не делают, а мы платим 3% в день! Вход от 20 000 тг, вывод каждый день",
+    "Розыгрыш iPhone 15! Участие 1000 тг. Так не делают нигде — шанс 1 из 50!",
+    "Казино Vavada дарит 200% на первый депозит и 100 фриспинов. Другие так не делают",
+    # «заблокированы 72 часа» — не новость о блокировке сайтов
+    "Ваши 1 200 USDT заблокированы 72 часа. Для разблокировки нужно внести депозит 150 USDT, прибыль 30% в день",
+    # подражание банку после просьбы ввести данные
+    "Многодетным семьям положена единовременная выплата 70 000 тг. Чтобы получить, введите ИИН и номер карты в боте @vyplata_bot. Код из смс никому не сообщайте",
+    "Выплата 70 000 тг всем семьям. Отправьте номер карты не говоря никому, пишите @vyplata_kz",
+    # упоминание egov.kz не делает выплату легальной
+    "Многодетным единовременная выплата 70 000 тг (список на egov.kz). Для зачисления пришлите ИИН и номер карты @vyplata_kz",
+    "Абонентам положена компенсация до 150 000 тг. Сопровождение стоит 4 500, оплатите и деньги придут за 3 дня",
+    # возврат потерянного «юристами» за пошлину
+    "Вы вкладывали в проект и потеряли деньги? Наши юристы вернут их, нужно оплатить пошлину 20 000 тг",
+    "Пострадали от пирамиды? Наши юристы помогут вернуть средства, оплатите пошлину 20 000 тг",
+    "Вернём деньги, потерянные в пирамидах и у брокеров! Наши юристы, оплата пошлины 20 000 тг",
+])
+def test_round10_review_evasions_reach_medium(detector: Detector, text: str) -> None:
+    # Act
+    analysis = _analyze(detector, text)
+
+    # Assert
+    assert analysis.level in ("medium", "high"), (analysis.score, [e.feature_id for e in analysis.evidence])
+
+
+@pytest.mark.parametrize("text", [
+    "Организаторы обещали 10% в месяц. Вкладчики потеряли деньги, суд постановил возврат средств",
+    "Если вы потеряли чек, возврат товара всё равно возможен по выписке",
+    "Потеряли кошелёк на остановке? Нашедший вернёт за вознаграждение, звоните",
+    "Пособие назначается по ИИН через ЦОН, номер карты указывать не нужно",
+    "Компенсация за свет пересчитана автоматически. Счета за ноябрь нужно оплатить до 25 декабря",
+])
+def test_round10_review_false_positives_stay_low(detector: Detector, text: str) -> None:
+    # Act
+    analysis = _analyze(detector, text)
+
+    # Assert
+    assert analysis.level == "low", (analysis.score, [e.feature_id for e in analysis.evidence])
