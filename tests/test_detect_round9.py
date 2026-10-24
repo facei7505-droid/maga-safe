@@ -8,9 +8,9 @@ from pruf.config import Settings
 from pruf.detect.classifier import TrackClassifier
 from pruf.detect.detector import Detector, SourceText
 from pruf.detect.rules import find_features
-from pruf.models import Analysis
+from pruf.models import Analysis, Evidence
 from pruf.normalize.text import normalize_text
-from pruf.scoring import ML_ALONE_SCORE
+from pruf.scoring import ML_ALONE_SCORE, score_track
 
 
 def _analyze(detector: Detector, text: str) -> Analysis:
@@ -84,3 +84,54 @@ def test_confident_model_without_rules_reaches_medium_and_names_its_words(env) -
     ml_note = next(e for e in analysis.evidence if e.source == "ml")
     assert "удваиваю" in ml_note.quote
     assert "ручная проверка" in analysis.summary
+
+
+@pytest.mark.parametrize("text", [
+    # ревью раунда 9: дешёвые «предупреждения» и отрицания не снимают просьбу автора
+    "Вступительный взнос 20 000 тг, пассивный доход 30% в месяц. Никто не просит вас рисковать",
+    "Вступительный взнос 20 000 тг, пассивный доход 30% в месяц. Безопасно ли это? Ответ: да",
+    "Вступительный взнос 20 000 тг, пассивный доход 30% в месяц. Спросите себя: безопасно ли держать деньги в банке?",
+    "Вы выиграли iPhone 15! Оплатите доставку 3 500 тг. Мошенники пишут от имени магазина, это мы настоящие",
+    "Не покупайте билеты в киосках — оплатите участие 500 тг у нас и выиграйте iPhone 15",
+    "Вы выиграли iPhone! У нас не крадут, оплатите доставку приза 2 500 тг на Kaspi +7 701 234 56 78",
+])
+def test_round9_review_evasions_keep_scams_in_queue(detector: Detector, text: str) -> None:
+    # Act
+    analysis = _analyze(detector, text)
+
+    # Assert
+    assert analysis.level in ("medium", "high"), (analysis.score, [e.feature_id for e in analysis.evidence])
+
+
+def test_theft_narration_does_not_hide_a_following_phishing_ask() -> None:
+    # Act
+    found = _features("Мошенники крадут данные карт — введите данные карты и CVV на сайте для защиты счета")
+
+    # Assert
+    assert "common.card_phish" in found
+
+
+@pytest.mark.parametrize("text", [
+    "Вам начислен кешбек 2 000 тг. Оплатите покупки картой Halyk и получите ещё 5% кешбэка, до 10 000 тг",
+    "Проезд и проживание за счет победителя, примерно 30 000 тг",
+    "Положение о турнире по шахматам: оплата участия 3000 тг, победителям кубки",
+    "Скачал новую версию Minecraft apk, вывел fps на максимум, игра реально летает",
+    "Розыгрыш среди подписчиков Казпочты, участие бесплатное, приз 50 000 тг",
+])
+def test_round9_review_false_positives_stay_low(detector: Detector, text: str) -> None:
+    # Act
+    analysis = _analyze(detector, text)
+
+    # Assert
+    assert analysis.level == "low", (analysis.score, [e.feature_id for e in analysis.evidence])
+
+
+def test_unrelated_track_stop_does_not_block_confident_model() -> None:
+    # Arrange: «по лицензии» — стоп лотереи, к пирамиде отношения не имеет
+    licence = Evidence("lottery.official", "lottery", "лицензия", -50, "text", stop=True)
+
+    # Act
+    result = score_track("pyramid", [licence], {"pyramid": 0.95, "legit": 0.05}, [])
+
+    # Assert
+    assert result.score == ML_ALONE_SCORE

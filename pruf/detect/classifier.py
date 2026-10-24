@@ -21,7 +21,7 @@ from pruf.normalize.text import normalize_text
 
 log = logging.getLogger(__name__)
 CLASSES = ("legit", "lottery", "casino", "pyramid")
-_WORD_RE = re.compile(r"\w{3,}")
+_WORD_RE = re.compile(r"[^\W\d_]{3,}")  # слова без цифр: «000» и «кс100» аналитику ничего не объясняют
 
 
 def build_pipeline() -> Pipeline:

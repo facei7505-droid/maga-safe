@@ -65,6 +65,7 @@ AUX_FEATURES = frozenset({"lottery.big_prize", "pyramid.closed_group", "pyramid.
 MONEY_ASKS = frozenset({"common.kaspi_transfer", "common.card_phish", "common.paid_access"})  # просьба отдать деньги или данные карты
 # Модель уверена в треке: вместе с одним признаком в тексте это уже сочетание сигналов, а не «один признак»
 ML_CONFIRM = 0.5
+AUTHOR_ASK = "common.author_ask"  # «оплатите / пригласите» от автора: предупреждение рядом с этим — маскировка
 DENIAL = "common.denial"  # «бұл scam емес», «мы работаем честно»: предупреждение рядом с этим — маскировка
 LLM_LEGIT = "llm.legit"  # LLM: пост целиком похож на легальный, своих признаков схемы не нашла
 STRONG_CONTEXT = 15.0
@@ -98,7 +99,7 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     hard_contact = bool(CONTACT_EVIDENCE & (common.keys() | own.keys()))
     # «Осторожно, мошенники!» рядом с реквизитом или просьбой заплатить — маскировка, а не предупреждение:
     # баллы оно не снимает, остаётся только потолок «средний»
-    disguise = has_transfer or has_contact or DENIAL in common
+    disguise = has_transfer or has_contact or DENIAL in common or AUTHOR_ASK in common
     # «Итоги тиража» рядом с реквизитом или просьбой заплатить баллы тоже не снимают; потолок «средний» остаётся.
     # «Запись в лс» у турнира — не маскировка: мягкий призыв снимает только скидку предупреждения.
     unmasked = has_transfer or hard_contact
@@ -117,8 +118,10 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
         score = min(ML_ONLY_CAP, 100.0 * p_track * ML_WEIGHT * 2)
 
     capped: str | None = None
-    ml_alone = (not has_positive and p_track is not None and p_track >= ML_ALONE and not warning
-                and not any(e.stop or e.feature_id == LLM_LEGIT for e in evidence))
+    # стоп-признаки других треков («по лицензии» у лотереи) и замаскированное «предупреждение» модель не останавливают
+    own_stop = any(e.stop for key, e in own.items() if not key.endswith(AWARENESS_SUFFIX))
+    ml_alone = (not has_positive and p_track is not None and p_track >= ML_ALONE and not (warning and not disguise)
+                and not own_stop and not any(e.feature_id == LLM_LEGIT for e in evidence))
     if ml_alone:
         score, capped = ML_ALONE_SCORE, "признаков из словаря нет, сигнал только модели — нужна ручная проверка"
     track_context = [c for c in _unique_by_feature(c for c in context if c.track in (track, "common")).values() if c.weight > 0]
