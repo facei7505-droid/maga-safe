@@ -61,6 +61,10 @@ BLIND_HISTORY = (
     ("handwritten_blind_v8", "код раунда 6, для сравнения", "0,918", "0,560", "0,050"),
     ("handwritten_blind_v8", "раунд 8, первый замер: правила + ML (v7 в обучении)", "0,940", "0,630", "0,040"),
     ("handwritten_blind_v8", "оценка: + LLM-арбитр с вето, ответы записаны тем же промптом (eval/llm_verdicts_v8.json)", "1,000", "0,890", "0,000"),
+    ("handwritten_blind_v9", "код до раунда 2, для сравнения", "0,794", "0,270", "0,070"),
+    ("handwritten_blind_v9", "код раунда 6, для сравнения", "0,869", "0,530", "0,080"),
+    ("handwritten_blind_v9", "раунд 8, первый замер: правила + ML (v8 в обучении)", "0,918", "0,670", "0,060"),
+    ("handwritten_blind_v9", "оценка: + LLM-арбитр с вето, ответы записаны тем же промптом (eval/llm_verdicts_v9.json)", "0,947", "0,890", "0,050"),
 )
 
 
@@ -228,7 +232,7 @@ def main() -> None:
                     default=dev_paths(),
                     help="ручные dev-наборы, не из генератора: на них правила настраиваются")
     ap.add_argument("--blind", type=Path, nargs="*",
-                    default=[Path("eval/handwritten_blind_v8.jsonl")],
+                    default=[Path("eval/handwritten_blind_v9.jsonl")],
                     help="слепые наборы: написаны до правок агентом без доступа к коду, на них только измеряем")
     ap.add_argument("--report", type=Path, default=Path("reports/eval.json"))
     ap.add_argument("--markdown", type=Path, default=Path("docs/metrics.md"))
