@@ -3,6 +3,8 @@
 Ответы для слепого v7 лежат в eval/llm_verdicts_v7.json (id → {"signals", "legit_context"}). Их дала модель
 того же семейства, что и в бою, поэтому оценка оптимистична: посты набора писал тоже Claude.
 Запуск: PRUF_DEV_MODE=1 python scripts/llm_sim.py
+Живой арбитр (нужен ANTHROPIC_API_KEY, модель из PRUF_LLM_MODEL):
+PRUF_DEV_MODE=1 python scripts/llm_sim.py --set eval/handwritten_blind_v10.jsonl --live
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import pruf.detect.detector as detector_module
 import pruf.scoring as scoring
 from pruf.config import Settings
 from pruf.detect.detector import Detector, SourceText
-from pruf.detect.llm import LlmVerdict, parse_llm_output
+from pruf.detect.llm import LlmArbiter, LlmVerdict, parse_llm_output
 from pruf.normalize.requisites import redact_cards
 
 
@@ -57,8 +59,18 @@ def main() -> None:
     ap.add_argument("--set", type=Path, default=Path("eval/handwritten_blind_v7.jsonl"))
     ap.add_argument("--verdicts", type=Path, default=Path("eval/llm_verdicts_v7.json"))
     ap.add_argument("--model", type=Path, default=Path("models/clf.joblib"))
+    ap.add_argument("--live", action="store_true", help="спросить настоящий API вместо записанных ответов")
     args = ap.parse_args()
     rows = [json.loads(line) for line in args.set.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if args.live:
+        settings = Settings(model_path=args.model)
+        if not settings.anthropic_api_key:
+            sys.exit("нужен ANTHROPIC_API_KEY в окружении")
+        arbiter = LlmArbiter(settings.anthropic_api_key, settings.llm_model, settings.llm_daily_budget)
+        print("без LLM:                ", measure(rows, Detector(settings)))
+        print("живой арбитр 20–74:     ", measure(rows, Detector(settings, llm=arbiter)))
+        print("статистика арбитра:     ", arbiter.stats())
+        return
     verdicts = json.loads(args.verdicts.read_text(encoding="utf-8"))
     by_text = {redact_cards(r["text"]): verdicts[r["id"]] for r in rows if r["id"] in verdicts}
     settings = Settings(model_path=args.model)
