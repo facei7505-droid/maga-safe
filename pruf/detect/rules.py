@@ -45,6 +45,9 @@ _REPORTED_SPLIT_RE = re.compile(r"[.!?;:\n—–]")
 _NEGATION_SPLIT_RE = re.compile(r"[,.!?;:\n—–]|\s-\s")
 REPORTABLE = NEGATABLE | {"common.dm_redirect", "casino.hidden_promo"}
 _KK_NEG_IMPERATIVE_RE = re.compile(r"\w(?:ма|ме|ба|бе|па|пе)(?:ныз|низ|ндар)(?!\w)")
+# «данные карты никому не сообщайте»: запрет стоит сразу после дополнения
+_RU_NEG_AFTER_RE = re.compile(r"\w*\s+(?:никому\s+|никогда\s+)?(?:не|нельзя)\s+(?:сообща|говор|называ|передава|диктуй|вводи|отправля|сообщ|пересыла)\w*")
+AUTHOR_ASK_ID = "common.author_ask"
 _QUOTED_RE = re.compile(r"«[^»\n]{1,300}»|“[^”\n]{1,300}”|„[^“\n]{1,300}“|\"[^\"\n]{1,300}\"|(?<!\w)'[^'\n]{1,300}'(?!\w)")
 
 
@@ -79,8 +82,26 @@ def find_features(text: NormText, source: str = "text", keep_quoted: bool = Fals
                     stop=feature.stop, core=feature.core,
                 ))
                 hits += 1
+    if keep_quoted:
+        return found
     # Если в посте есть реквизит или ссылка, кавычки не спасают: «Наш «розыгрыш, участие 500 тг» настоящий» — реклама
-    return found if keep_quoted else _drop_quoted_in_warnings(found, text.original)
+    return _drop_quoted_in_warnings(_drop_quoted_asks(found, text.original), text.original)
+
+
+def _quoted_spans(original: str) -> list[tuple[int, int]]:
+    return [m.span() for m in _QUOTED_RE.finditer(original)]
+
+
+def _inside(span: tuple[int, int] | None, quoted: list[tuple[int, int]]) -> bool:
+    return bool(span) and any(qs <= span[0] and span[1] <= qe for qs, qe in quoted)
+
+
+def _drop_quoted_asks(found: list[Evidence], original: str) -> list[Evidence]:
+    """«Пришло смс «оплатите комиссию»» — просьба в кавычках принадлежит не автору поста."""
+    if not any(e.feature_id == AUTHOR_ASK_ID for e in found):
+        return found
+    quoted = _quoted_spans(original)
+    return [e for e in found if e.feature_id != AUTHOR_ASK_ID or not _inside(e.span, quoted)]
 
 
 def _reported(folded: str, start: int) -> bool:
@@ -100,6 +121,8 @@ def _negated(folded: str, start: int, end: int) -> bool:
         if len(gap.split()) <= NEGATION_GAP_WORDS and not _AFFIRMATIVE_ASK_RE.search(gap + folded[start:end]):
             return True
     # казахское отрицание стоит в глаголе после дополнения: «деректерін енгізбеңіз», «каспиге аудармаңыз»
+    if _RU_NEG_AFTER_RE.match(folded[end:end + NEGATION_WINDOW]):
+        return True
     tail = re.match(r"\w*(?:\s+\w+){0,2}", folded[end:])
     return bool(_KK_NEG_IMPERATIVE_RE.search(folded[max(0, start - NEGATION_WINDOW):end + tail.end()]))
 
@@ -108,8 +131,7 @@ def _drop_quoted_in_warnings(found: list[Evidence], original: str) -> list[Evide
     """В посте-предупреждении признаки, целиком попавшие в кавычки, не считаются: это цитата мошенников."""
     if not any(e.stop and e.feature_id.endswith(".awareness") for e in found):
         return found
-    quoted = [m.span() for m in _QUOTED_RE.finditer(original)]
+    quoted = _quoted_spans(original)
     if not quoted:
         return found
-    return [e for e in found
-            if e.stop or not e.span or not any(qs <= e.span[0] and e.span[1] <= qe for qs, qe in quoted)]
+    return [e for e in found if e.stop or not _inside(e.span, quoted)]
