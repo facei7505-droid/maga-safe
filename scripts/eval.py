@@ -56,6 +56,11 @@ BLIND_HISTORY = (
     ("handwritten_blind_v7", "код раунда 6, для сравнения", "0,886", "0,780", "0,100"),
     ("handwritten_blind_v7", "раунд 7, первый замер (шаблоны по ошибкам v6 и ревью): прироста нет", "0,876", "0,780", "0,110"),
     ("handwritten_blind_v7", "оценка: + LLM-арбитр в зоне 20–74 с вето только без контактов и просьб о деньгах, ответы записаны тем же промптом (scripts/llm_sim.py), нужен ANTHROPIC_API_KEY", "0,948", "0,920", "0,050"),
+    ("handwritten_blind_v8", "код до раунда 2, для сравнения", "0,708", "0,170", "0,070"),
+    ("handwritten_blind_v8", "код раунда 5, для сравнения", "0,738", "0,310", "0,110"),
+    ("handwritten_blind_v8", "код раунда 6, для сравнения", "0,918", "0,560", "0,050"),
+    ("handwritten_blind_v8", "раунд 8, первый замер: правила + ML (v7 в обучении)", "0,940", "0,630", "0,040"),
+    ("handwritten_blind_v8", "оценка: + LLM-арбитр с вето, ответы записаны тем же промптом (eval/llm_verdicts_v8.json)", "1,000", "0,890", "0,000"),
 )
 
 
@@ -223,7 +228,7 @@ def main() -> None:
                     default=dev_paths(),
                     help="ручные dev-наборы, не из генератора: на них правила настраиваются")
     ap.add_argument("--blind", type=Path, nargs="*",
-                    default=[Path("eval/handwritten_blind_v7.jsonl")],
+                    default=[Path("eval/handwritten_blind_v8.jsonl")],
                     help="слепые наборы: написаны до правок агентом без доступа к коду, на них только измеряем")
     ap.add_argument("--report", type=Path, default=Path("reports/eval.json"))
     ap.add_argument("--markdown", type=Path, default=Path("docs/metrics.md"))

@@ -16,7 +16,7 @@ from pruf.config import ROOT
 DEV_SETS: tuple[str, ...] = (
     "handwritten", "dev_round2", "dev_round4", "dev_round5", "dev_round6",
     "handwritten_blind", "handwritten_blind_v2", "handwritten_blind_v3", "handwritten_blind_v4", "handwritten_blind_v5",
-    "handwritten_blind_v6",
+    "handwritten_blind_v6", "handwritten_blind_v7",
 )
 HANDWRITTEN_REPEAT = 3
 
