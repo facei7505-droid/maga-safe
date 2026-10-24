@@ -126,9 +126,10 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
         score, capped = NO_COMBO_CAP, "нет обязательного сочетания признаков для высокого риска"
     if warning and not disguise and (is_news or core_count < 2) and score > SINGLE_CAP:
         score, capped = SINGLE_CAP, "похоже на предупреждение или новость о схеме"
-    elif any(e.feature_id == LLM_LEGIT for e in evidence) and not hard_contact and score > SINGLE_CAP:
-        # текст недоверенный: при реквизите или ссылке «это легально» от LLM балл не снижает
-        score, capped = SINGLE_CAP, "LLM считает контекст легальным, реквизитов и ссылок нет"
+    elif (any(e.feature_id == LLM_LEGIT for e in evidence) and score > SINGLE_CAP
+          and not (has_transfer or has_contact or hard_contact or ml_confirms or track_context)):
+        # текст недоверенный: при просьбе о деньгах, контакте, уверенной модели или связях «это легально» балл не снижает
+        score, capped = SINGLE_CAP, "LLM считает контекст легальным; ссылок, контактов и просьб о деньгах нет"
     elif any(e.stop for e in own.values()) and score > STOP_CAP:
         score, capped = STOP_CAP, "есть признаки легальности"
     score = max(0.0, min(100.0, score))

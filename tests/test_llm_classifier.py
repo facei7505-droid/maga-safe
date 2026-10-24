@@ -379,3 +379,55 @@ def test_detector_loads_classifier_from_model_path(classifier: TrackClassifier, 
 
     # Assert
     assert det.has_classifier
+
+
+def test_review_caches_repeated_text_and_respects_daily_budget() -> None:
+    # Arrange
+    arbiter, messages = _arbiter(_response('{"signals": [], "legit_context": false}'))
+    arbiter._daily_budget = 2
+
+    # Act
+    first = arbiter.review("пост один")
+    again = arbiter.review("пост один")
+    second = arbiter.review("пост два")
+    over_budget = arbiter.review("пост три")
+
+    # Assert
+    assert first is not None and again == first and second is not None
+    assert len(messages.calls) == 2
+    assert over_budget is None
+    assert arbiter.stats()["last_error"] == "daily_budget"
+
+
+@pytest.mark.parametrize("contact", [
+    " Подробнее: mega-win.top",
+    " Пиши в лс",
+    " Админ @best_bonus_kz",
+    " Звони 8 7 0 1 2 3 4 5 6 7 8",
+    " Кидай на каспи",
+])
+def test_llm_legit_opinion_does_not_lower_post_with_any_contact(tmp_path: Path, contact: str) -> None:
+    # Arrange
+    text = LEGIT_FEE_TEXT + contact
+    base = _detector(tmp_path).detect([SourceText("text", text)], allow_llm=False).analysis
+    det = _detector(tmp_path, llm=FakeLlm(LlmVerdict(evidence=(), legit_context=True)))
+
+    # Act
+    analysis = det.detect([SourceText("text", text)]).analysis
+
+    # Assert
+    assert base.level != "low"
+    assert analysis.score == base.score
+
+
+def test_llm_legit_opinion_does_not_lower_truncated_post(tmp_path: Path) -> None:
+    # Arrange: арбитр видит только начало длинного поста
+    text = "Обычный пост про погоду. " * 200 + LEGIT_FEE_TEXT
+    base = _detector(tmp_path).detect([SourceText("text", text)], allow_llm=False).analysis
+    det = _detector(tmp_path, llm=FakeLlm(LlmVerdict(evidence=(), legit_context=True)))
+
+    # Act
+    analysis = det.detect([SourceText("text", text)]).analysis
+
+    # Assert
+    assert analysis.score == base.score

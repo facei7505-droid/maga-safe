@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import secrets
+from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import date
 
 from pruf.detect.lexicon import TRACKS
 from pruf.models import Evidence
@@ -17,6 +20,7 @@ from pruf.models import Evidence
 log = logging.getLogger(__name__)
 MAX_INPUT_CHARS = 4000
 LLM_WEIGHT = 12.0
+CACHE_SIZE = 4096  # повторные посты (рассылки, репосты) не оплачиваются второй раз
 
 _SYSTEM = (
     "Ты помогаешь аналитику по финансовой безопасности Казахстана. Тебе дают сообщение из соцсети или мессенджера "
@@ -58,7 +62,7 @@ class LlmVerdict:
 
 
 class LlmArbiter:
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, daily_budget: int = 5000):
         import anthropic
 
         self._anthropic = anthropic
@@ -67,15 +71,35 @@ class LlmArbiter:
         self._calls = 0
         self._failures = 0
         self._last_error: str | None = None
+        self._daily_budget = daily_budget
+        self._day = date.today()
+        self._spent_today = 0
+        self._cache: OrderedDict[str, LlmVerdict] = OrderedDict()
 
     def stats(self) -> dict[str, object]:
-        return {"model": self._model, "calls": self._calls, "failures": self._failures, "last_error": self._last_error}
+        return {"model": self._model, "calls": self._calls, "failures": self._failures, "last_error": self._last_error,
+                "spent_today": self._spent_today, "daily_budget": self._daily_budget, "cached": len(self._cache)}
 
     def review(self, text: str) -> LlmVerdict | None:
+        key = hashlib.sha256(text[:MAX_INPUT_CHARS].encode("utf-8")).hexdigest()
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        if self._day != date.today():
+            self._day, self._spent_today = date.today(), 0
+        if self._spent_today >= self._daily_budget:
+            # бюджет исчерпан: пост остаётся с баллом правил и ML, статус «failed» виден аналитику
+            self._last_error = "daily_budget"
+            return None
         self._calls += 1
+        self._spent_today += 1
         verdict = self._review(text)
         if verdict is None:
             self._failures += 1
+            return None
+        self._cache[key] = verdict
+        if len(self._cache) > CACHE_SIZE:
+            self._cache.popitem(last=False)
         return verdict
 
     def _review(self, text: str) -> LlmVerdict | None:

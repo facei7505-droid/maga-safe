@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from pruf.config import Settings
 from pruf.detect.classifier import TrackClassifier
-from pruf.detect.llm import LlmArbiter
+from pruf.detect.llm import MAX_INPUT_CHARS, LlmArbiter
 from pruf.detect.rules import find_features
 from pruf.models import HIGH_THRESHOLD, Analysis, Evidence
 from pruf.normalize.links import (
@@ -27,6 +27,9 @@ from pruf.scoring import LLM_LEGIT, combine
 # Спорная зона для LLM: от «один признак упёрся в потолок» (20–34) до нижней части высокого риска (65–74),
 # где чаще всего ложные срабатывания на легальных сборах и платных мероприятиях
 LLM_ZONE = (20.0, HIGH_THRESHOLD + 10.0)
+# Вето LLM только у поста, где некуда платить или писать: ни ссылки, ни реквизита, ни @ника, ни номера с пробелами
+_HANDLE_RE = re.compile(r"(?<![\w@])@[A-Za-z0-9_]{3,}")
+_SPACED_NUMBER_RE = re.compile(r"\d(?:[\s\-().]*\d){6,}")
 log = logging.getLogger(__name__)
 # Только по имени хоста, не по пути: «gov.kz/news/kazino-zapret» не казино. «bet» только целой меткой
 # (bet.kz, jet-casino.bet, bet-777.top), иначе ловятся alphabet.com и tibet.kz.
@@ -100,7 +103,7 @@ class Detector:
         self._hmac_key = settings.effective_hmac_key()
         self._classifier = classifier if classifier is not None else TrackClassifier.load(settings.model_path)
         if llm is None and settings.anthropic_api_key:
-            llm = LlmArbiter(settings.anthropic_api_key, settings.llm_model)
+            llm = LlmArbiter(settings.anthropic_api_key, settings.llm_model, settings.llm_daily_budget)
         self._llm = llm
 
     @property
@@ -156,7 +159,12 @@ class Detector:
                 llm_status = "ok"
                 extra = list(verdict.evidence)
                 if verdict.legit_context and not verdict.evidence:
-                    # Вето ограничено в scoring.py: при реквизите или ссылке мнение LLM балл не снижает
-                    extra.append(Evidence(LLM_LEGIT, "common", "LLM: контекст похож на легальный", 0, "llm"))
+                    llm_status = "legit"
+                    # Текст недоверенный: вето только у поста без ссылок, реквизитов и контактов, прочитанного LLM целиком.
+                    # Остальные условия (просьба о деньгах, «пиши в лс», уверенная модель, связи) проверяет scoring.py.
+                    vetoable = not links and not requisites and len(full_text) <= MAX_INPUT_CHARS \
+                        and not _HANDLE_RE.search(full_text) and not _SPACED_NUMBER_RE.search(full_text)
+                    extra.append(Evidence(LLM_LEGIT if vetoable else "llm.legit_note", "common",
+                                          "LLM: контекст похож на легальный", 0, "llm"))
             analysis = combine(evidence + extra, ml, context, req_dicts, link_dicts, llm_status=llm_status)
         return Detection(analysis=analysis, requisites=tuple(requisites), links=tuple(links), folded=folded)

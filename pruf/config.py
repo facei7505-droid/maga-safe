@@ -25,6 +25,7 @@ class Settings:
     hmac_key: str = field(default_factory=lambda: os.environ.get("PRUF_HMAC_KEY", ""))
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
     llm_model: str = field(default_factory=lambda: os.environ.get("PRUF_LLM_MODEL", "claude-opus-5-5"))
+    llm_daily_budget: int = field(default_factory=lambda: int(os.environ.get("PRUF_LLM_DAILY_BUDGET", "5000")))
     telegram_token: str = field(default_factory=lambda: os.environ.get("TELEGRAM_BOT_TOKEN", ""))
     telegram_secret: str = field(default_factory=lambda: os.environ.get("PRUF_TELEGRAM_SECRET", ""))
     resolve_links: bool = field(default_factory=lambda: os.environ.get("PRUF_RESOLVE_LINKS", "") == "1")
