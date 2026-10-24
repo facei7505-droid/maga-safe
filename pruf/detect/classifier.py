@@ -1,12 +1,14 @@
 """ML-классификатор: char n-gram TF-IDF + логистическая регрессия по свёрнутому тексту.
 
 Классы: legit, lottery, casino, pyramid. Модель дополняет правила, но не заменяет их:
-без правил её вклад ограничен средним риском (см. scoring.py).
+без правил уверенная модель ставит пост максимум в «средний» и показывает слова, на которые опиралась
+(см. scoring.py).
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -19,6 +21,7 @@ from pruf.normalize.text import normalize_text
 
 log = logging.getLogger(__name__)
 CLASSES = ("legit", "lottery", "casino", "pyramid")
+_WORD_RE = re.compile(r"\w{3,}")
 
 
 def build_pipeline() -> Pipeline:
@@ -58,3 +61,25 @@ class TrackClassifier:
     def predict_folded(self, folded: str) -> dict[str, float]:
         probs = self._pipeline.predict_proba([folded])[0]
         return {label: float(p) for label, p in zip(self._pipeline.classes_, probs)}
+
+    def explain(self, folded: str, label: str, top: int = 3) -> list[str]:
+        """Слова текста, сильнее всего толкающие модель к label против legit: вклад их char n-грамм."""
+        tfidf, clf = self._pipeline.named_steps["tfidf"], self._pipeline.named_steps["clf"]
+        classes = list(clf.classes_)
+        if label == "legit" or label not in classes or "legit" not in classes:
+            return []
+        if clf.coef_.shape[0] == 1:  # два класса: одна строка весов «за classes_[1]»
+            weights = clf.coef_[0] if classes[1] == label else -clf.coef_[0]
+        else:
+            weights = clf.coef_[classes.index(label)] - clf.coef_[classes.index("legit")]
+        row = tfidf.transform([folded]).tocoo()
+        values = dict(zip(row.col, row.data))
+        vocab = tfidf.vocabulary_
+        scores: dict[str, float] = {}
+        for word in dict.fromkeys(_WORD_RE.findall(folded)):
+            padded = f" {word} "
+            grams = {padded[i:i + n] for n in range(2, 6) for i in range(len(padded) - n + 1)}
+            idx = (vocab.get(g) for g in grams)
+            scores[word] = sum(values[j] * weights[j] for j in idx if j in values)
+        ranked = sorted((w for w, v in scores.items() if v > 0), key=lambda w: -scores[w])
+        return ranked[:top]

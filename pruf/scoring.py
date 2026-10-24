@@ -6,7 +6,9 @@
 2. rule_score = 100 * (1 - exp(-points / SATURATION)).
 3. Если есть ML: score = max(rule_score, 0.65 * rule_score + 0.35 * 100 * p(track)),
    то есть модель может только поднять балл. Без признаков ML даёт максимум ML_ONLY_CAP,
-   это ниже среднего риска: одна модель без цитируемых признаков пост в очередь не ставит.
+   это ниже среднего риска. Исключение: модель уверена (p ≥ ML_ALONE), нет предупреждения,
+   стоп-признака и вето LLM. Тогда пост получает ML_ALONE_SCORE («средний», только ручная проверка),
+   а аналитик видит слова, на которые опиралась модель.
 4. Один-единственный признак трека без общих признаков даёт не больше низкого риска:
    риск строится на сочетании сигналов.
 5. Высокий риск только при обязательном сочетании: два «ядровых» признака трека
@@ -28,7 +30,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 from pruf.detect.lexicon import TRACK_LABELS, TRACKS
 from pruf.models import (
@@ -42,7 +44,11 @@ from pruf.models import (
 
 SATURATION = 35.0
 ML_WEIGHT = 0.35
-ML_ONLY_CAP = 30.0  # ниже порога «средний»: одна модель без признаков не поднимает пост в очередь
+ML_ONLY_CAP = 30.0  # ниже порога «средний»: неуверенная модель без признаков не поднимает пост в очередь
+# Уверенная модель без признаков правил: живой сленг и казахский, которых нет в словаре. Только «средний»:
+# пост идёт аналитику на ручную проверку со словами, на которые опиралась модель (scripts/eval.py, слепой v9).
+ML_ALONE = 0.6
+ML_ALONE_SCORE = MEDIUM_THRESHOLD + 5.0
 STOP_CAP = HIGH_THRESHOLD - 1
 SINGLE_CAP = MEDIUM_THRESHOLD - 1
 CONTEXT_ONLY_CAP = HIGH_THRESHOLD - 1
@@ -111,6 +117,10 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
         score = min(ML_ONLY_CAP, 100.0 * p_track * ML_WEIGHT * 2)
 
     capped: str | None = None
+    ml_alone = (not has_positive and p_track is not None and p_track >= ML_ALONE and not warning
+                and not any(e.stop or e.feature_id == LLM_LEGIT for e in evidence))
+    if ml_alone:
+        score, capped = ML_ALONE_SCORE, "признаков из словаря нет, сигнал только модели — нужна ручная проверка"
     track_context = [c for c in _unique_by_feature(c for c in context if c.track in (track, "common")).values() if c.weight > 0]
     strong_own = any(c.track == track and c.weight >= STRONG_CONTEXT for c in track_context)
     if has_positive or score >= MEDIUM_THRESHOLD or strong_own:
@@ -163,7 +173,7 @@ def summarize(level: str, track: str | None, evidence: list[Evidence], capped: s
 
 def combine(evidence: list[Evidence], ml: Mapping[str, float] | None = None,
             context: list[Evidence] | None = None, requisites: tuple = (), links: tuple = (),
-            llm_status: str = "off") -> Analysis:
+            llm_status: str = "off", ml_words: Mapping[str, Sequence[str]] | None = None) -> Analysis:
     context = context or []
     tracks = tuple(score_track(t, evidence, ml, context) for t in TRACKS)
     top = max(tracks, key=lambda t: t.score)
@@ -173,8 +183,11 @@ def combine(evidence: list[Evidence], ml: Mapping[str, float] | None = None,
     relevant = [e for e in evidence if track is None or e.track in (track, "common") or e.stop] + \
                [c for c in context if track is None or c.track in (track, "common") or c.weight > 0]
     if track and top.ml_probability is not None:
-        relevant.append(Evidence(f"ml.{track}", track, f"Модель на n-граммах текста: вероятность трека {top.ml_probability:.0%}",
-                                 0, "ml"))
+        words = list((ml_words or {}).get(track, ()))
+        label = f"Модель на n-граммах текста: вероятность трека {top.ml_probability:.0%}"
+        if words:
+            label += ", опирается на слова " + ", ".join(f"«{w}»" for w in words)
+        relevant.append(Evidence(f"ml.{track}", track, label, 0, "ml", quote=", ".join(words)))
     return Analysis(
         score=top.score, level=top.level, track=track, tracks=tracks,
         evidence=tuple(sorted(relevant, key=lambda e: -abs(e.weight))),

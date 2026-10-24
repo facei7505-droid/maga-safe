@@ -22,7 +22,7 @@ from pruf.normalize.links import (
 )
 from pruf.normalize.requisites import Requisite, extract_requisites, redact_cards
 from pruf.normalize.text import normalize_text
-from pruf.scoring import LLM_LEGIT, combine
+from pruf.scoring import LLM_LEGIT, ML_CONFIRM, combine
 
 # Спорная зона для LLM: от «один признак упёрся в потолок» (20–34) до нижней части высокого риска (65–74),
 # где чаще всего ложные срабатывания на легальных сборах и платных мероприятиях
@@ -115,6 +115,13 @@ class Detector:
             return {"configured": False}
         return {"configured": True, **self._llm.stats()}
 
+    def _ml_words(self, folded: str, ml: dict[str, float] | None) -> dict[str, list[str]]:
+        """Слова, на которые опирается уверенная модель: аналитик видит, почему она так решила."""
+        if not ml or self._classifier is None:
+            return {}
+        return {track: self._classifier.explain(folded, track) for track, p in ml.items()
+                if track != "legit" and p >= ML_CONFIRM}
+
     def detect(self, sources: list[SourceText], context: list[Evidence] | None = None, allow_llm: bool = True) -> Detection:
         evidence: list[Evidence] = []
         requisites: list[Requisite] = []
@@ -143,11 +150,12 @@ class Detector:
         evidence.extend(_requisite_evidence(requisites))
         folded = "\n".join(folded_parts)
         ml = self._classifier.predict_folded(folded) if self._classifier and folded.strip() else None
+        ml_words = self._ml_words(folded, ml)
 
         req_dicts = tuple({"kind": r.kind, "key": r.key, "display": r.display} for r in requisites)
         link_dicts = tuple({k: v for k, v in asdict(l).items() if k != "raw_span"} for l in links)
         llm_status = "off" if self._llm is None else "not_needed"
-        analysis = combine(evidence, ml, context, req_dicts, link_dicts, llm_status=llm_status)
+        analysis = combine(evidence, ml, context, req_dicts, link_dicts, llm_status=llm_status, ml_words=ml_words)
 
         if allow_llm and self._llm and LLM_ZONE[0] <= analysis.score < LLM_ZONE[1]:
             full_text = "\n".join(redact_cards(s.text) or "" for s in sources if s.text)
@@ -166,5 +174,5 @@ class Detector:
                         and not _HANDLE_RE.search(full_text) and not _SPACED_NUMBER_RE.search(full_text)
                     extra.append(Evidence(LLM_LEGIT if vetoable else "llm.legit_note", "common",
                                           "LLM: контекст похож на легальный", 0, "llm"))
-            analysis = combine(evidence + extra, ml, context, req_dicts, link_dicts, llm_status=llm_status)
+            analysis = combine(evidence + extra, ml, context, req_dicts, link_dicts, llm_status=llm_status, ml_words=ml_words)
         return Detection(analysis=analysis, requisites=tuple(requisites), links=tuple(links), folded=folded)

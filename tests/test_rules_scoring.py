@@ -10,6 +10,9 @@ from pruf.detect.rules import find_features
 from pruf.models import HIGH_THRESHOLD, MEDIUM_THRESHOLD, Evidence, level_for
 from pruf.normalize.text import normalize_text
 from pruf.scoring import (
+    LLM_LEGIT,
+    ML_ALONE,
+    ML_ALONE_SCORE,
     ML_ONLY_CAP,
     NO_COMBO_CAP,
     STOP_CAP,
@@ -267,12 +270,35 @@ def test_context_without_own_features_cannot_reach_high() -> None:
     assert result.level == "medium"
 
 
-def test_ml_alone_stays_below_medium() -> None:
+def test_unsure_ml_alone_stays_below_medium() -> None:
+    # Act
+    result = score_track("pyramid", [], {"pyramid": ML_ALONE - 0.05, "legit": 1 - ML_ALONE + 0.05}, [])
+
+    # Assert: неуверенная модель без признаков не ставит пост в очередь аналитика
+    assert result.score <= ML_ONLY_CAP
+    assert result.level == "low"
+
+
+def test_confident_ml_alone_reaches_medium_for_manual_review() -> None:
     # Act
     result = score_track("pyramid", [], {"pyramid": 0.99, "legit": 0.01}, [])
 
-    # Assert: модель без признаков не ставит пост в очередь аналитика
-    assert result.score == ML_ONLY_CAP
+    # Assert: только «средний», с причиной в сводке
+    assert result.score == ML_ALONE_SCORE
+    assert result.level == "medium"
+    assert result.capped_reason is not None
+
+
+@pytest.mark.parametrize("blocker", [
+    ev("common.awareness", "common", 0),
+    ev("lottery.legal_free", "pyramid", -10, stop=True),
+    ev(LLM_LEGIT, "common", 0, source="llm"),
+])
+def test_confident_ml_alone_yields_to_warning_stop_or_llm_veto(blocker: Evidence) -> None:
+    # Act
+    result = score_track("pyramid", [blocker], {"pyramid": 0.99, "legit": 0.01}, [])
+
+    # Assert
     assert result.level == "low"
 
 
