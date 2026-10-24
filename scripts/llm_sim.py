@@ -10,6 +10,7 @@ PRUF_DEV_MODE=1 python scripts/llm_sim.py --set eval/handwritten_blind_v10.jsonl
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -67,13 +68,15 @@ def main() -> None:
         if not settings.anthropic_api_key:
             sys.exit("нужен ANTHROPIC_API_KEY в окружении")
         arbiter = LlmArbiter(settings.anthropic_api_key, settings.llm_model, settings.llm_daily_budget)
-        print("без LLM:                ", measure(rows, Detector(settings)))
-        print("живой арбитр 20–74:     ", measure(rows, Detector(settings, llm=arbiter)))
+        # без ключа в настройках Detector не создаёт своего арбитра: базовая строка — правда без LLM
+        offline = dataclasses.replace(settings, anthropic_api_key="")
+        print("без LLM:                ", measure(rows, Detector(offline)))
+        print("живой арбитр 20–74:     ", measure(rows, Detector(offline, llm=arbiter)))
         print("статистика арбитра:     ", arbiter.stats())
         return
     verdicts = json.loads(args.verdicts.read_text(encoding="utf-8"))
     by_text = {redact_cards(r["text"]): verdicts[r["id"]] for r in rows if r["id"] in verdicts}
-    settings = Settings(model_path=args.model)
+    settings = dataclasses.replace(Settings(model_path=args.model), anthropic_api_key="")  # только записанные ответы
     print("без LLM:                ", measure(rows, Detector(settings)))
     zone = detector_module.LLM_ZONE
     detector_module.LLM_ZONE = (scoring.MEDIUM_THRESHOLD, scoring.HIGH_THRESHOLD)

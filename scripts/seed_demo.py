@@ -134,7 +134,7 @@ def main() -> None:
     ap.add_argument("--no-ocr", action="store_true", help="без OCR (быстро, но без диффа сумм)")
     args = ap.parse_args()
 
-    settings = Settings()
+    settings = Settings(anthropic_api_key="")  # заливка демо не тратит API: арбитр зовётся только для новых постов на сайте
     if args.reset and (not os.environ.get("PRUF_DATA_DIR") or settings.data_dir.resolve() == (ROOT / "data").resolve()):
         sys.exit("--reset удаляет каталог данных: задайте отдельный PRUF_DATA_DIR (например data/demo), не основной data/")
     if args.reset and settings.data_dir.exists():

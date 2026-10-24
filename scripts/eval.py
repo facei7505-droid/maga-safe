@@ -69,6 +69,7 @@ BLIND_HISTORY = (
     ("handwritten_blind_v10", "код раунда 6, для сравнения", "0,883", "0,530", "0,070"),
     ("handwritten_blind_v10", "код раунда 8 с моделью раунда 9, для сравнения", "0,928", "0,640", "0,050"),
     ("handwritten_blind_v10", "раунд 9, первый замер: правила + ML, уверенная модель ставит «средний» со своими словами", "0,940", "0,780", "0,050"),
+    ("handwritten_blind_v10", "раунд 9 + живой LLM-арбитр (Sonnet 5.5, effort low, два прогона по 103 вызова)", "0,956", "0,860–0,870", "0,040"),
 )
 
 
@@ -152,7 +153,7 @@ def eval_full(posts: list[SynthPost], data_root: Path, model: Path | None) -> di
 
     tmp = Path(tempfile.mkdtemp(prefix="pruf_eval_"))
     try:
-        settings = Settings(data_dir=tmp, model_path=model or Path("/nonexistent"))
+        settings = Settings(data_dir=tmp, model_path=model or Path("/nonexistent"), anthropic_api_key="")
         pruf = Pruf(settings)
         rows = []
         started = time.time()
@@ -243,7 +244,7 @@ def main() -> None:
     args = ap.parse_args()
     posts = read_jsonl(args.data)
     test = [p for p in posts if p.split == "test"]
-    settings = Settings(model_path=args.model)
+    settings = Settings(model_path=args.model, anthropic_api_key="")  # eval не тратит API: арбитра меряет llm_sim.py
     report = {"dataset": {"posts": len(posts), "test": len(test), "test_labels": dict(Counter(p.label for p in test))},
               "results": {}}
     if args.mode in ("text", "both"):
