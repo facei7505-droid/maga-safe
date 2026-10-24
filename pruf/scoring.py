@@ -49,8 +49,7 @@ CONTEXT_ONLY_CAP = HIGH_THRESHOLD - 1
 NO_COMBO_CAP = HIGH_THRESHOLD - 1
 AWARENESS_SUFFIX = ".awareness"
 NEWS_WARNING = "common.news.awareness"
-QUESTION_WARNING = "common.question.awareness"
-SHARED_WARNINGS = frozenset({"common.awareness", NEWS_WARNING, QUESTION_WARNING})  # на все треки; «рейд», «подпольн» — только казино
+SHARED_WARNINGS = frozenset({"common.awareness", NEWS_WARNING, "common.question.awareness"})  # на все треки; «рейд», «подпольн» — только казино
 # Реквизит или ссылка: у настоящей рекламы схемы есть куда платить или переходить, у новости и предупреждения обычно нет
 CONTACT_EVIDENCE = frozenset({"common.requisite", "common.kaspi_pay_link", "common.shortener", "common.brand_lookalike", "casino.domain"})
 # «Пиши в лс», «ссылка в шапке» — призыв к действию в рекламе, но в новости это описание схемы
@@ -62,7 +61,10 @@ MONEY_ASKS = frozenset({"common.kaspi_transfer", "common.card_phish", "common.pa
 ML_CONFIRM = 0.5
 DENIAL = "common.denial"  # «бұл scam емес», «мы работаем честно»: предупреждение рядом с этим — маскировка
 LLM_LEGIT = "llm.legit"  # LLM: пост целиком похож на легальный, своих признаков схемы не нашла
-STRONG_CONTEXT = 15.0  # сигнал реестра/графа такой силы учитывается даже без признаков в тексте
+STRONG_CONTEXT = 15.0
+CONTACT_COMBO_FEATURES = frozenset({"casino.fixed_match", "casino.money_game", "pyramid.high_return", "pyramid.mutual_aid",
+                                    "lottery.entry_fee", "lottery.prize_fee"})
+ML_CONTACT_COMBO = 0.3  # сигнал реестра/графа такой силы учитывается даже без признаков в тексте
 
 
 def _unique_by_feature(items: Iterable[Evidence]) -> dict[str, Evidence]:
@@ -120,16 +122,16 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
         score, capped = CONTEXT_ONLY_CAP, "собственных признаков нет, только связь с рискованными постами"
     ml_confirms = p_track is not None and p_track >= ML_CONFIRM
     # признак схемы + реквизит или просьба заплатить — уже сочетание: куда переводить, тоже сигнал
-    # ядровой признак + «пиши в лс» / «ссылка в профиле» без предупреждения рядом — тоже сочетание: есть куда идти
-    contact_combo = (has_contact and len(positives) == 1 and positives[0].core and positives[0].feature_id not in SOFT_CONTACT
-                     and not warning and not any(e.stop for e in evidence))
+    # узкий признак схемы + «пиши в лс» без предупреждения рядом — тоже сочетание: есть куда идти.
+    # Широкие признаки («приглашаю», «пакет от», «слоты», «розыгрыш») с «пишите в лс» — обычная реклама услуг.
+    contact_combo = (has_contact and len(positives) == 1 and positives[0].feature_id in CONTACT_COMBO_FEATURES
+                     and not warning and not any(e.stop for e in evidence) and (p_track is None or p_track >= ML_CONTACT_COMBO))
     if len(positives) == 1 and not (unmasked or track_context or ml_confirms or contact_combo) and score > SINGLE_CAP:
         score, capped = SINGLE_CAP, "найден только один признак, нужен хотя бы ещё один"
     core_count = sum(1 for e in own.values() if e.core)
     if score >= HIGH_THRESHOLD and not (core_count >= 2 or (core_count >= 1 and (has_transfer or track_context))):
         score, capped = NO_COMBO_CAP, "нет обязательного сочетания признаков для высокого риска"
-    is_question = any(e.feature_id == QUESTION_WARNING for e in evidence)
-    if warning and not disguise and (is_news or is_question or core_count < 2) and score > SINGLE_CAP:
+    if warning and not disguise and (is_news or core_count < 2) and score > SINGLE_CAP:
         score, capped = SINGLE_CAP, "похоже на предупреждение или новость о схеме"
     elif (any(e.feature_id == LLM_LEGIT for e in evidence) and score > SINGLE_CAP
           and not (has_transfer or has_contact or hard_contact or ml_confirms or track_context)):
