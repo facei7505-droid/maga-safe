@@ -16,7 +16,7 @@ MAX_QUOTES_PER_FEATURE = 2
 # «Не регистрируйтесь по таким ссылкам» — тоже совет, а не скрытая реклама.
 NEGATABLE = frozenset({"common.kaspi_transfer", "common.card_phish", "lottery.entry_fee", "lottery.prize_fee", "pyramid.entry",
                        "casino.hidden_promo"})
-NEGATION_WINDOW = 20
+NEGATION_WINDOW = 30  # «не просят код из СМС или CVV»: отрицание покрывает перечисление
 REPORTED_TAIL = 30
 REPORTED_WINDOW = 90  # «Блогеры, которые показывают «…» и дают ссылку в шапке» — описание длиннее отрицания
 _NEGATED_VERB_RE = re.compile(
