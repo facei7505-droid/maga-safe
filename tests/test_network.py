@@ -114,6 +114,33 @@ def test_large_component_is_split_into_communities():
     assert all(len(n["channels"]) < 51 for n in nets)
 
 
+def test_backup_number_in_another_community_is_not_cut_off():
+    # Канал @x принимает деньги на номера обеих больших групп: блокировка одного его не отрезает
+    g = nx.Graph()
+    pid = 0
+    for group, phone in (("a", "req:+77000000001"), ("b", "req:+77000000002")):
+        for i in range(25):
+            pid += 1
+            _post(g, pid, f"@{group}{i}", money=[phone])
+    _post(g, pid + 1, "@x", money=["req:+77000000001", "req:+77000000002"])
+
+    nets = network.networks(g)
+
+    for net in nets:
+        for key in net["key_nodes"]:
+            assert "@x" not in key["cut_off"]
+
+
+def test_post_counts_once_even_with_several_requisites():
+    g = nx.Graph()
+    _post(g, 1, "@a", money=["req:+77000000001", "domain:a.top", "req:+77000000003"])
+    _post(g, 2, "@b", money=["req:+77000000001"])
+
+    net = network.networks(g)[0]
+
+    assert net["posts"] == 2
+
+
 def test_case_card_and_networks_endpoint_show_key_requisite(tmp_path):
     # Arrange: два канала просят перевести на один номер Kaspi
     settings = make_settings(tmp_path)

@@ -112,6 +112,8 @@ class CaseGraph:
         self._cases: dict[str, CaseSummary] = {}
         self._case_of_post: dict[int, str] = {}
         self._networks: list[dict[str, Any]] | None = None
+        self._case_networks: dict[str, dict[str, Any]] = {}
+        self._generation = 0  # растёт при каждой сборке: по нему отбрасываем расчёт по старому графу
 
     def ensure(self, version: int, force: bool = False) -> None:
         """Пересобрать граф, если были новые посты. Маленький граф пересобирается сразу; большой
@@ -156,6 +158,8 @@ class CaseGraph:
         self._linking = nx.Graph((u, v) for u, v, d in g.edges(data=True) if d["type"] in LINK_EDGES)
         self._cases, self._case_of_post = self._compute_cases(g, posts)
         self._networks = None  # считаются по первому запросу
+        self._case_networks = {}
+        self._generation += 1
 
     @staticmethod
     def _hubs(g: nx.Graph, posts: dict[int, dict]) -> set[str]:
@@ -236,17 +240,30 @@ class CaseGraph:
         return self._cases.get(key)
 
     def networks(self) -> list[dict[str, Any]]:
+        # Считаем вне блокировки, чтобы не держать приём постов; граф после сборки не меняется
         with self._lock:
-            if self._networks is None:
-                self._networks = network.networks(self.graph)
-            return self._networks
+            if self._networks is not None:
+                return self._networks
+            graph, generation = self.graph, self._generation
+        nets = network.networks(graph)
+        with self._lock:
+            if generation == self._generation:
+                self._networks = nets
+        return nets
 
     def case_network(self, key: str) -> dict[str, Any] | None:
         """Сеть каналов кейса и ключевые реквизиты: что заблокировать, чтобы отрезать схему от денег."""
-        case = self._cases.get(key)
+        with self._lock:
+            if key in self._case_networks:
+                return self._case_networks[key]
+            case, graph, generation = self._cases.get(key), self.graph, self._generation
         if not case:
             return None
-        return network.describe(network.money_graph(self.graph, case.post_ids), key)
+        net = network.describe(network.money_graph(graph, case.post_ids), key)
+        with self._lock:
+            if generation == self._generation:
+                self._case_networks[key] = net
+        return net
 
     def case_for_post(self, post_id: int) -> str | None:
         return self._case_of_post.get(post_id)

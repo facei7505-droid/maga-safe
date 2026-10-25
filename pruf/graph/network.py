@@ -26,6 +26,7 @@ MIN_NETWORK_CHANNELS = 2
 TOP_KEYS = 3
 LOUVAIN_MIN_NODES = 40
 LOUVAIN_SEED = 7  # одинаковое разбиение при каждой пересборке
+EXACT_BETWEENNESS_MAX = 300  # выше считаем betweenness по выборке узлов: точный расчёт O(V·E)
 
 
 @dataclass(frozen=True)
@@ -53,17 +54,18 @@ def money_graph(g: nx.Graph, post_ids: Iterable[int] | None = None) -> nx.Graph:
         if only is not None and int(node[5:]) not in only:
             continue
         chan = f"channel:{data['channel']}"
-        for nb in g.neighbors(node):
+        money = [nb for nb in g.neighbors(node) if g.nodes[nb].get("type") in MONEY_TYPES and not g.nodes[nb].get("hub")]
+        if not money:
+            continue
+        if chan not in h:
+            h.add_node(chan, type="channel", label=data["channel"], posts=0, tracks=Counter(), score=0.0)
+        info = h.nodes[chan]
+        info["posts"] += 1
+        info["score"] = max(info["score"], float(data.get("score") or 0))
+        if data.get("track"):
+            info["tracks"][data["track"]] += 1
+        for nb in money:
             nd = g.nodes[nb]
-            if nd.get("type") not in MONEY_TYPES or nd.get("hub"):
-                continue
-            if chan not in h:
-                h.add_node(chan, type="channel", label=data["channel"], posts=0, tracks=Counter(), score=0.0)
-            info = h.nodes[chan]
-            info["posts"] += 1
-            info["score"] = max(info["score"], float(data.get("score") or 0))
-            if data.get("track"):
-                info["tracks"][data["track"]] += 1
             h.add_node(nb, type=nd["type"], label=nd.get("label", nb[nb.index(":") + 1:]), kind=nd.get("kind", "domain"))
             weight = h.edges[chan, nb]["weight"] + 1 if h.has_edge(chan, nb) else 1
             h.add_edge(chan, nb, weight=weight)
@@ -88,20 +90,24 @@ def key_nodes(h: nx.Graph, limit: int = TOP_KEYS) -> list[KeyNode]:
     money = [n for n in h if _blockable(h, n)]
     if not money:
         return []
-    between = nx.betweenness_centrality(h, normalized=True) if len(h) > 2 else dict.fromkeys(h, 0.0)
+    if len(h) <= 2:
+        between = dict.fromkeys(h, 0.0)
+    elif len(h) <= EXACT_BETWEENNESS_MAX:
+        between = nx.betweenness_centrality(h, normalized=True)
+    else:
+        between = nx.betweenness_centrality(h, k=EXACT_BETWEENNESS_MAX, normalized=True, seed=LOUVAIN_SEED)
     routes = {c: {m for m in h.neighbors(c) if _blockable(h, m)} for c in _channels(h)}
-    keys = []
+    ranked = []
     for m in money:
         users = sorted(h.neighbors(m))
-        cut = [c for c in users if routes[c] == {m}]  # у канала нет другого реквизита или домена для денег
-        rest = h.copy()
-        rest.remove_node(m)
-        keys.append(KeyNode(
-            node=m, label=h.nodes[m]["label"], kind=h.nodes[m]["kind"],
-            channels=tuple(h.nodes[c]["label"] for c in users), cut_off=tuple(h.nodes[c]["label"] for c in cut),
-            parts_after=channel_parts(rest), centrality=round(between.get(m, 0.0), 3)))
-    keys.sort(key=lambda k: (-len(k.cut_off), -k.centrality, -len(k.channels), k.label))
-    return keys[:limit]
+        cut = [c for c in users if routes.get(c) == {m}]  # у канала нет другого реквизита или домена для денег
+        ranked.append((m, users, cut))
+    ranked.sort(key=lambda r: (-len(r[2]), -between.get(r[0], 0.0), -len(r[1]), h.nodes[r[0]]["label"]))
+    # «На сколько частей распадётся» считаем только для показанных узлов: это обход всего графа
+    return [KeyNode(node=m, label=h.nodes[m]["label"], kind=h.nodes[m]["kind"],
+                    channels=tuple(h.nodes[c]["label"] for c in users), cut_off=tuple(h.nodes[c]["label"] for c in cut),
+                    parts_after=channel_parts(nx.restricted_view(h, [m], [])), centrality=round(between.get(m, 0.0), 3))
+            for m, users, cut in ranked[:limit]]
 
 
 def describe(h: nx.Graph, key: str | None = None) -> dict[str, Any]:
@@ -131,10 +137,15 @@ def networks(g: nx.Graph, min_channels: int = MIN_NETWORK_CHANNELS) -> list[dict
     h = money_graph(g)
     groups: list[set[str]] = []
     for comp in nx.connected_components(h):
-        if len(comp) > LOUVAIN_MIN_NODES:
-            groups.extend(nx.community.louvain_communities(h.subgraph(comp), weight="weight", seed=LOUVAIN_SEED))
-        else:
+        if len(comp) <= LOUVAIN_MIN_NODES:
             groups.append(comp)
+            continue
+        for community in nx.community.louvain_communities(h.subgraph(comp), weight="weight", seed=LOUVAIN_SEED):
+            # Каналы сообщества вместе со всеми их реквизитами: иначе запасной номер в соседнем
+            # сообществе пропадёт и канал ошибочно попадёт в «отрезанные от денег»
+            chans = {n for n in community if h.nodes[n]["type"] == "channel"}
+            with_money = chans | {m for c in chans for m in h.neighbors(c)}
+            groups.extend(nx.connected_components(h.subgraph(with_money)))
     out = []
     for group in groups:
         sub = h.subgraph(group)

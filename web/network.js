@@ -69,7 +69,9 @@ export function networkPanel(net, { title = "Что заблокировать: 
 
 // Две колонки: реквизиты и домены слева, каналы справа. Заблокированное красное, отрезанное серое.
 function bipartite(net, blocked, cut) {
-  const money = [...net.money].sort((a, b) => degree(net, b.node) - degree(net, a.node));
+  const deg = new Map();
+  for (const [, m] of net.edges) deg.set(m, (deg.get(m) || 0) + 1);
+  const money = [...net.money].sort((a, b) => (deg.get(b.node) || 0) - (deg.get(a.node) || 0));
   const chans = [...net.channels];
   const rowsN = Math.max(money.length, chans.length);
   const step = rowsN > 30 ? 14 : ROW;
@@ -87,7 +89,7 @@ function bipartite(net, blocked, cut) {
     const g = svgEl("g", { class: "nm" + (off ? " off" : "") + (m.blockable === false ? " link" : "") },
       svgEl("rect", { x: xM - 6, y: y - 6, width: 12, height: 12, rx: m.kind === "domain" ? 2 : 6 }),
       svgEl("text", { x: xM - 14, y: y + 4, "text-anchor": "end" }, String(m.label).slice(0, 30)));
-    g.addEventListener("mousemove", (e) => tip(e, [kindName(m.kind), m.label, `каналов: ${degree(net, m.node)}`]));
+    g.addEventListener("mousemove", (e) => tip(e, [kindName(m.kind), m.label, `каналов: ${deg.get(m.node) || 0}`]));
     g.addEventListener("mouseleave", untip);
     svg.append(g);
   }
@@ -97,8 +99,4 @@ function bipartite(net, blocked, cut) {
       svgEl("circle", { cx: xC, cy: y, r: 5 }), svgEl("text", { x: xC + 12, y: y + 4 }, c.slice(0, 28))));
   }
   return svg;
-}
-
-function degree(net, node) {
-  return net.edges.reduce((n, [, m]) => n + (m === node ? 1 : 0), 0);
 }

@@ -9,8 +9,12 @@ export async function loadScout() {
   const root = $("#scout");
   root.replaceChildren(el("p", { class: "muted" }, "Загрузка…"));
   try {
-    const [{ data }, nets] = await Promise.all([api("/api/v1/scout"), api("/api/v1/networks?limit=5")]);
-    root.replaceChildren(networksSection(nets.data), ...render(data));
+    // Сети необязательны: если их расчёт упал, вкладка всё равно показывает каналы
+    const nets = api("/api/v1/networks?limit=5").then((r) => r.data, () => []);
+    const { data } = await api("/api/v1/scout");
+    const parts = render(data);
+    parts.splice(parts.length - 1, 0, networksSection(await nets));  // сети перед таблицей каналов
+    root.replaceChildren(...parts.filter(Boolean));
   } catch (err) { showError(root, err); }
 }
 
