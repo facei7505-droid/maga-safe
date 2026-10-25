@@ -73,9 +73,9 @@ function rotation(net) {
   const fresh = net.fresh || [];
   if (!fresh.length) return null;
   return el("div", { class: "net-fresh", role: "note" },
-    el("b", {}, "Ротация реквизитов: "), `сеть работает с ${day(net.since)}, позже появились новые реквизиты. Их тоже нужно блокировать.`,
+    el("b", {}, "Ротация реквизитов: "), `сеть работает с ${day(net.since)}, часть каналов сменила реквизиты. Новые тоже нужно блокировать.`,
     el("ul", {}, fresh.map((f) => el("li", {},
-      el("b", { class: "mono" }, f.label), ` ${kindName(f.kind)} · впервые ${day(f.first_seen)} · каналов: ${f.channels.length}`))));
+      el("b", { class: "mono" }, f.label), ` ${kindName(f.kind)} · вместо ${f.replaces.join(", ")} · с ${day(f.first_seen)} · каналов: ${f.channels.length}`))));
 }
 
 // Две колонки: реквизиты и домены слева, каналы справа. Заблокированное красное, отрезанное серое.

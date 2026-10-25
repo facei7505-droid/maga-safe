@@ -60,12 +60,12 @@ def test_registry_requisite_domain_and_text_copy(inspector: Inspector) -> None:
     ids = {r["id"] for r in res["reasons"]}
     assert ids == {"registry.requisite", "registry.domain", "registry.text_copy"}
     assert res["score"] == 100 and res["blacklisted_domains"] == ["joy-slots-kz.top"]
-    assert res["requisites"] == [{"type": "phone", "value": "+77016550742", "found": True, "tracks": ["pyramid"], "reported": False}]
+    assert res["requisites"] == [{"type": "phone", "value": "+77016550742", "found": True, "tracks": ["pyramid"]}]
 
 
 def test_unknown_requisite_is_reported_without_counts(inspector: Inspector) -> None:
     res = inspector.inspect(["+7 777 000 11 22"], [], None, [])
-    assert res["requisites"] == [{"type": "phone", "value": "+77770001122", "found": False, "tracks": [], "reported": False}]
+    assert res["requisites"] == [{"type": "phone", "value": "+77770001122", "found": False, "tracks": []}]
     assert res["score"] == 0
 
 
@@ -206,23 +206,36 @@ def _report(client: TestClient, install_id: str, digest: str = "a" * 64, **extra
     return client.post("/api/v1/reports", json=body)
 
 
-def test_reports_from_three_people_add_weight_to_requisite(tmp_path: Path, pruf: Pruf) -> None:
+def test_reports_reach_analyst_but_never_change_public_verdict(tmp_path: Path, pruf: Pruf) -> None:
     with _client(tmp_path, pruf) as client:
-        # Arrange: двое пожаловались, третий дважды нажал кнопку на один и тот же пост
-        before = client.post("/api/v1/inspect", json={"requisites": [FRESH], "links": [], "cues": []}).json()["data"]
-        accepted = [_report(client, f"install-{i}").json()["data"]["accepted"] for i in (1, 2)]
-        two = client.post("/api/v1/inspect", json={"requisites": [FRESH], "links": [], "cues": []}).json()["data"]
-        accepted.append(_report(client, "install-3").json()["data"]["accepted"])
+        # Arrange: трое «разных людей» жалуются на номер, один нажал кнопку дважды
+        accepted = [_report(client, f"install-{i}").json()["data"]["accepted"] for i in (1, 2, 3)]
         duplicate = _report(client, "install-3").json()["data"]["accepted"]
 
         # Act
-        after = client.post("/api/v1/inspect", json={"requisites": [FRESH], "links": [], "cues": []}).json()["data"]
+        verdict = client.post("/api/v1/inspect", json={"requisites": [FRESH], "links": [], "cues": []}).json()["data"]
+        queue = client.get("/api/v1/reports").json()["data"]
 
-    # Assert
+    # Assert: токен расширения общий, поэтому жалобы не дают оговорить номер конкурента
     assert accepted == [True, True, True] and duplicate is False
-    assert before["score"] == two["score"] == 0  # одного-двух человек мало, чтобы оговорить номер
-    assert [r["id"] for r in after["reasons"]] == ["registry.reports"]
-    assert after["requisites"][0]["reported"] is True
+    assert verdict["score"] == 0 and verdict["requisites"] == [{"type": "phone", "value": FRESH, "found": False, "tracks": []}]
+    assert queue[0]["value"] == FRESH and queue[0]["reporters"] == 3 and queue[0]["reports"] == 3
+
+
+def test_reports_are_rate_limited_per_ip(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf) as client:
+        codes = [_report(client, f"install-{i}", digest=f"{i:064x}").status_code for i in range(7)]
+
+    assert codes[:5] == [200] * 5 and codes[5:] == [429, 429]
+
+
+def test_report_stores_date_and_keyed_hash_only(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf) as client:
+        _report(client, "install-1")
+        row = pruf.db._one("SELECT ts, text_hash, reporter FROM user_reports")
+
+    assert len(row["ts"]) == 10  # только дата
+    assert row["text_hash"] != "a" * 64 and len(row["reporter"]) == 24
 
 
 def test_report_requires_something_to_report(tmp_path: Path, pruf: Pruf) -> None:
@@ -256,7 +269,7 @@ def test_report_needs_extension_token_outside_dev(tmp_path: Path, pruf: Pruf) ->
     assert allowed.status_code == 200 and allowed.json()["data"]["accepted"] is True
 
 
-def test_demo_reports_mark_new_whatsapp_number_as_reported(pruf: Pruf) -> None:
+def test_demo_reports_bring_new_whatsapp_number_to_analyst(pruf: Pruf) -> None:
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("seed_demo", ROOT / "scripts/seed_demo.py")
@@ -264,6 +277,12 @@ def test_demo_reports_mark_new_whatsapp_number_as_reported(pruf: Pruf) -> None:
     spec.loader.exec_module(seed)
 
     assert seed.seed_reports(pruf) == 8
-    ins = Inspector(pruf.db, pruf.settings.effective_hmac_key())
-    res = ins.inspect(["+7 708 400 12 90", "+7 771 555 23 41"], [], None, [])
-    assert [r["reported"] for r in res["requisites"]] == [True, False]  # три человека против одного
+    rows = {r["display"]: r for r in pruf.db.reported_requisites()}
+    assert rows["+77084001290"]["reporters"] == 3 and not rows["+77084001290"]["in_registry"]  # новый номер из WhatsApp
+
+
+def test_report_with_only_garbage_is_rejected(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf) as client:
+        resp = _report(client, "install-1", requisites=["не номер"], links=[], cues=["no_such_cue"])
+
+    assert resp.status_code == 422

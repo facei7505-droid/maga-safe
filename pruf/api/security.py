@@ -94,12 +94,12 @@ def require_analyst(request: Request, settings: Settings, limiter: RateLimiter) 
 
 
 def require_bank(request: Request, settings: Settings, limiter: RateLimiter) -> str:
-    """Токен банка. Пока банкам токены не выданы, ленту открывает токен аналитика: демо-сайт не пустой."""
+    """Токен банка. С PRUF_BANK_ALLOW_ANALYST=1, пока банкам токены не выданы, ленту открывает токен аналитика."""
     if settings.dev_mode and not settings.bank_tokens:
         limiter.check(f"dev:{_client(request)}")
         return "bank:dev"
     entries = _named_tokens(settings.bank_tokens, "bank")
-    if not entries and settings.analyst_token:
+    if not entries and settings.analyst_token and settings.bank_allow_analyst:
         entries = [(f"analyst-{name}", token) for name, token in _named_tokens(settings.analyst_token.split(","), "analyst")]
     if not entries:
         raise HTTPException(status_code=503, detail="Сервер не настроен: задайте PRUF_BANK_TOKENS")

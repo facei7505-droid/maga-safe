@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import threading
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -102,6 +103,9 @@ class InspectIn(BaseModel):
         return items
 
 
+REPORTS_PER_MINUTE_PER_IP = 5
+
+
 class ReportIn(InspectIn):
     """Жалоба «Сообщить в ПРУФ»: то же извлечённое, что для проверки, плюс площадка и случайный id установки."""
     text_hash: str = Field(pattern="^[0-9a-f]{64}$")
@@ -122,6 +126,7 @@ class CaseUpdate(BaseModel):
 def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> FastAPI:
     settings = settings or load_settings()
     limiter = RateLimiter(settings.rate_limit_per_minute)
+    report_limiter = RateLimiter(REPORTS_PER_MINUTE_PER_IP)  # токен расширения общий: жалобы ограничиваем по IP
     state: dict[str, Any] = {}
     bot_lock = threading.Lock()
 
@@ -440,12 +445,16 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         return ok(inspector().inspect(body.requisites, body.links, body.text_hash, body.cues))
 
     @app.post("/api/v1/reports")
-    def report_post(body: ReportIn, actor: str = Depends(extension)):
+    def report_post(body: ReportIn, request: Request, actor: str = Depends(extension)):
         """Жалоба пользователя. Кто жалуется, хранится только как HMAC от токена и id установки."""
-        if not (body.requisites or body.links or body.cues):
-            raise HTTPException(status_code=422, detail="В жалобе нет ни реквизитов, ни ссылок, ни признаков")
-        reporter = hmac.new(core().settings.effective_hmac_key(), f"{actor}|{body.install_id}".encode(), "sha256").hexdigest()[:24]
-        accepted = inspector().report(reporter, body.platform, body.requisites, body.links, body.text_hash, body.cues)
+        report_limiter.check(f"report:{request.client.host if request.client else 'unknown'}")
+        # Месячная эпоха: жалобы одного человека не склеиваются в профиль дольше месяца
+        epoch = time.strftime("%Y-%m", time.gmtime())
+        reporter = hmac.new(core().settings.effective_hmac_key(), f"{actor}|{body.install_id}|{epoch}".encode(), "sha256").hexdigest()[:24]
+        try:
+            accepted = inspector().report(reporter, body.platform, body.requisites, body.links, body.text_hash, body.cues)
+        except ValueError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
         core().db.audit(actor, "user_report", body.platform)
         return ok({"accepted": accepted})
 

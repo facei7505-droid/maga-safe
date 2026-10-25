@@ -165,15 +165,15 @@
   }
 
   document.addEventListener("copy", async () => {
-    const selection = String(document.getSelection() || "").slice(0, 300);
+    const sel = document.getSelection();
+    const anchor = sel && sel.anchorNode && (sel.anchorNode.nodeType === Node.ELEMENT_NODE ? sel.anchorNode : sel.anchorNode.parentElement);
+    if (!anchor || anchor.closest("[contenteditable=true], [contenteditable=''], input, textarea")) return; // свой черновик не проверяем
+    const selection = String(sel).slice(0, 300);
     const requisites = extractRequisites(selection);
     if (!requisites.length) return;
     const reply = await chrome.runtime.sendMessage({ type: "checkRequisites", requisites }).catch(() => null);
-    const hit = reply && reply.ok && reply.data.requisites.find((r) => r.found || r.reported);
-    if (hit) {
-      toast(`⚠ ПРУФ: ${hit.value} ${hit.found ? "уже встречался в постах с признаками схем" : "вызвал жалобы пользователей"}. ` +
-        "Не переводите деньги, пока не проверите получателя.");
-    }
+    const hit = reply && reply.ok && reply.data.requisites.find((r) => r.found);
+    if (hit) toast(`⚠ ПРУФ: ${hit.value} уже встречался в постах с признаками схем. Не переводите деньги, пока не проверите получателя.`);
   });
 
   const observer = new MutationObserver((mutations) => {

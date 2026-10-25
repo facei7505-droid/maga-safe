@@ -385,28 +385,23 @@ class Database:
 
     # ---------- жалобы из расширения ----------
     def add_report(self, *, reporter: str, platform: str, text_hash: str, cues: Sequence[str], domains: Sequence[str],
-                   requisites: Sequence[tuple[str, str, str]]) -> bool:
-        """Жалоба пользователя. Повторная жалоба того же человека на тот же пост не считается."""
-        with self._lock:
+                   requisites: Sequence[tuple[str, str, str]], daily_cap: int = 30) -> bool:
+        """Жалоба пользователя. Повторная жалоба того же человека на тот же пост и жалобы сверх daily_cap
+        в сутки не считаются. Хранится дата без времени: по ней не сопоставить жалобу с логами доступа."""
+        today = utcnow()[:10]
+        # with self._conn: коммит или откат в любом случае, иначе пустой INSERT OR IGNORE держит блокировку записи
+        with self._lock, self._conn:
+            sent = self._conn.execute("SELECT COUNT(*) FROM user_reports WHERE reporter=? AND ts=?", (reporter, today)).fetchone()[0]
+            if sent >= daily_cap:
+                return False
             cur = self._conn.execute(
                 "INSERT OR IGNORE INTO user_reports (ts, reporter, platform, text_hash, cues, domains) VALUES (?,?,?,?,?,?)",
-                (utcnow(), reporter, platform, text_hash, ",".join(cues), ",".join(domains)))
+                (today, reporter, platform, text_hash, ",".join(cues), ",".join(domains)))
             if not cur.rowcount:
                 return False
             self._conn.executemany("INSERT OR IGNORE INTO report_requisites (report_id, kind, key, display) VALUES (?,?,?,?)",
                                    [(cur.lastrowid, kind, key, display) for kind, key, display in requisites])
-            self._conn.commit()
         return True
-
-    def report_reporters(self, keys: Iterable[str]) -> dict[str, int]:
-        """Сколько разных людей жаловались на каждый реквизит."""
-        keys = list(dict.fromkeys(keys))
-        if not keys:
-            return {}
-        rows = self._all(
-            f"SELECT rr.key, COUNT(DISTINCT r.reporter) AS n FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id "
-            f"WHERE rr.key IN ({','.join('?' * len(keys))}) GROUP BY rr.key", keys)
-        return {r["key"]: r["n"] for r in rows}
 
     def reported_requisites(self, limit: int = 200) -> list[dict[str, Any]]:
         """Реквизиты из жалоб для аналитика: сколько людей, с каких площадок, есть ли уже в реестре."""

@@ -161,21 +161,31 @@ def test_case_card_and_networks_endpoint_show_key_requisite(tmp_path):
     assert nets["data"][0]["key_nodes"][0]["label"] == net["key_nodes"][0]["label"]
 
 
-def test_requisite_added_later_is_reported_as_rotation():
-    # Сеть началась с одного номера, через неделю два канала перешли на новый
+def test_requisite_that_replaced_old_one_is_reported_as_rotation():
+    # Каналы работали на одном номере, потом перестали его публиковать и перешли на новый
     g = nx.Graph()
     _post(g, 1, "@a", money=["req:+77000000001"])
     _post(g, 2, "@b", money=["req:+77000000001"])
-    _post(g, 3, "@a", money=["req:+77000000009"])
+    _post(g, 3, "@a", money=["req:+77000000009", "domain:new-site.top"])
     _post(g, 4, "@b", money=["req:+77000000009", "domain:new-site.top"])
-    for pid, when in ((1, "2026-10-01T10:00:00"), (2, "2026-10-02T10:00:00"), (3, "2026-10-08T09:00:00"), (4, "2026-10-09T09:00:00")):
+    _post(g, 5, "@c", money=["req:+77000000001", "domain:side.top"])  # второй реквизит параллельно — не смена
+    _post(g, 6, "@c", money=["req:+77000000001", "domain:side.top"])
+    for pid, when in ((1, "2026-10-01T10:00:00"), (2, "2026-10-02T10:00:00+05:00"), (3, "2026-10-09T03:00:00+05:00"),
+                      (4, "2026-10-09T01:00:00+05:00"), (5, "2026-10-03T10:00:00"), (6, "2026-10-04T10:00:00")):
         g.nodes[f"post:{pid}"]["posted_at"] = when
 
     net = network.networks(g)[0]
 
     assert net["since"] == "2026-10-01"
-    assert [(f["label"], f["first_seen"]) for f in net["fresh"]] == [("new-site.top", "2026-10-09"), ("+77000000009", "2026-10-08")]
-    assert net["fresh"][1]["channels"] == ["@a", "@b"]
+    fresh = {f["label"]: f for f in net["fresh"]}
+    assert set(fresh) == {"new-site.top", "+77000000009"}  # side.top шёл вместе со старым номером, и он один
+    assert fresh["new-site.top"]["first_seen"] == "2026-10-08"  # 03:00 по Алматы — ещё 8-е по UTC
+    assert fresh["+77000000009"]["channels"] == ["@a", "@b"] and fresh["+77000000009"]["replaces"] == ["+77000000001"]
+
+
+def test_unparsable_dates_are_ignored():
+    assert network.utc_day("20.10.2026") is None and network.utc_day(None) is None
+    assert network.utc_day("2026-10-20T23:30:00-02:00") == "2026-10-21"
 
 
 def test_network_without_dates_has_no_rotation():
