@@ -52,6 +52,8 @@ class TelethonSource:
     def __init__(self, client: Any, sleep=time.sleep):
         self._tg = client if isinstance(client, ReadOnlyClient) else ReadOnlyClient(client)
         self._sleep = sleep
+        # get_entity(имя) каждый раз шлёт ResolveUsername, а у него жёсткий лимит Telegram: кэшируем
+        self._entities: dict[str, Any] = {}
 
     @classmethod
     def from_env(cls) -> TelethonSource:
@@ -64,7 +66,11 @@ class TelethonSource:
             raise RuntimeError("Задайте TG_API_ID и TG_API_HASH (my.telegram.org) в окружении, не в файлах репозитория")
         session = os.environ.get("PRUF_SCOUT_SESSION", "data/scout.session")
         client = ReadOnlyClient(TelegramClient(session, int(api_id), api_hash))
-        client.start()  # первый раз спросит телефон и код в консоли, дальше берёт файл сессии
+        old_umask = os.umask(0o077)  # файл сессии = полный доступ к аккаунту: только владельцу
+        try:
+            client.start()  # первый раз спросит телефон и код в консоли, дальше берёт файл сессии
+        finally:
+            os.umask(old_umask)
         return cls(client)
 
     def _call(self, fn, *args: Any, **kwargs: Any) -> Any:
@@ -81,16 +87,32 @@ class TelethonSource:
                 self._sleep(exc.seconds + 1)
         return None
 
-    def _entity(self, username: str) -> Any | None:
+    def _read(self, fn, *args: Any) -> Any:
+        """Чтение канала: закрытый канал = пусто, прочие ошибки Telegram останавливают запуск, а не роняют его."""
         from telethon import errors
 
         try:
-            entity = self._call(self._tg.get_entity, username)
-        except (ValueError, errors.RPCError):
-            return None  # нет такого имени, приватный или удалён
-        # Только публичные каналы и группы: личные аккаунты разведчик не читает
-        if type(entity).__name__ != "Channel" or not getattr(entity, "username", None):
+            return self._call(fn, *args)
+        except errors.ChannelPrivateError:
             return None
+        except errors.RPCError as exc:
+            raise SourceUnavailable(f"Telegram: {type(exc).__name__}") from exc
+
+    def _entity(self, username: str) -> Any | None:
+        from telethon import errors
+
+        if username in self._entities:
+            return self._entities[username]
+        try:
+            entity = self._call(self._tg.get_entity, username)
+        except (ValueError, errors.UsernameNotOccupiedError, errors.UsernameInvalidError, errors.ChannelPrivateError):
+            entity = None  # нет такого имени, приватный или удалён
+        except errors.RPCError as exc:
+            raise SourceUnavailable(f"Telegram: {type(exc).__name__}") from exc
+        # Только публичные каналы и группы: личные аккаунты разведчик не читает
+        if entity is not None and (type(entity).__name__ != "Channel" or not getattr(entity, "username", None)):
+            entity = None
+        self._entities[username] = entity
         return entity
 
     def channel_info(self, username: str) -> ChannelInfo | None:
@@ -99,7 +121,9 @@ class TelethonSource:
         entity = self._entity(username)
         if entity is None:
             return None
-        full = self._call(self._tg, GetFullChannelRequest(entity))
+        full = self._read(self._tg, GetFullChannelRequest(entity))
+        if full is None:
+            return None
         return ChannelInfo(username=username, title=getattr(entity, "title", username),
                            subscribers=getattr(full.full_chat, "participants_count", None), created_at=_iso(entity.date))
 
@@ -107,13 +131,15 @@ class TelethonSource:
         entity = self._entity(username)
         if entity is None:
             return []
-        messages = self._call(lambda: list(self._tg.iter_messages(entity, limit=limit)))
+        messages = self._read(lambda: list(self._tg.iter_messages(entity, limit=limit))) or []
         return [self._post(username, m) for m in messages if getattr(m, "message", None)]
 
     def search_channels(self, query: str, limit: int) -> list[str]:
         from telethon.tl.functions.contacts import SearchRequest
 
-        found = self._call(self._tg, SearchRequest(q=query, limit=limit))
+        found = self._read(self._tg, SearchRequest(q=query, limit=limit))
+        if found is None:
+            return []
         return [u for u in (normalize_username(getattr(c, "username", None)) for c in found.chats
                             if getattr(c, "broadcast", False) or getattr(c, "megagroup", False)) if u]
 
@@ -121,9 +147,11 @@ class TelethonSource:
         from telethon.tl.functions.messages import SearchGlobalRequest
         from telethon.tl.types import InputMessagesFilterEmpty, InputPeerEmpty
 
-        res = self._call(self._tg, SearchGlobalRequest(
+        res = self._read(self._tg, SearchGlobalRequest(
             q=query, filter=InputMessagesFilterEmpty(), min_date=None, max_date=None, offset_rate=0,
             offset_peer=InputPeerEmpty(), offset_id=0, limit=limit, broadcasts_only=True))
+        if res is None:
+            return []
         chats = {c.id: normalize_username(getattr(c, "username", None)) for c in res.chats}
         out = []
         for m in res.messages:

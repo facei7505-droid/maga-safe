@@ -12,7 +12,9 @@ from fastapi.testclient import TestClient
 
 from pruf.api.app import create_app
 from pruf.config import ROOT
+from pruf import inspect as inspect_mod
 from pruf.inspect import CUES, Inspector, blacklist_domain, text_hash
+from pruf.normalize.requisites import redact_cards
 from pruf.pipeline import Pruf, Submission
 from tests.helpers import TEST_HMAC_KEY, make_settings
 
@@ -23,6 +25,7 @@ SCAM = "Пассивный доход 5% в день! Пригласи друз�
 def pruf(tmp_path: Path, detector):
     p = Pruf(make_settings(tmp_path), detector=detector, ocr_enabled=False)
     p.ingest(Submission(text=SCAM, channel="@kassa_demo"))
+    p.ingest(Submission(text=SCAM + " Ждём вас!", channel="@invest_demo"))
     p.ingest(Submission(text="Бешбармак по-домашнему, заходите на recepty.kz", channel="@food_demo"))
     yield p
     p.db.close()
@@ -71,15 +74,34 @@ def test_blacklist_has_only_risky_non_brand_domains(inspector: Inspector) -> Non
 
 
 @pytest.mark.parametrize("domain,ok", [("joy-slots-kz.top", True), ("kaspi.kz", False), ("t.me", False),
-                                       ("bit.ly", False), ("bad domain.kz", False), ("a.b", False)])
+                                       ("bit.ly", False), ("bad domain.kz", False), ("a.b", False),
+                                       ("com.kz", False), ("kgd.gov.kz", False), ("pay.kaspi.kz", False),
+                                       ("github.io", False), ("scam.github.io", True), ("www.halykbank.kz", False)])
 def test_blacklist_domain_filter(domain: str, ok: bool) -> None:
     assert blacklist_domain(domain) is ok
 
 
-def test_index_refreshes_after_new_ingest(pruf: Pruf, inspector: Inspector) -> None:
-    pruf.ingest(Submission(text="Казино с выводом! Поднял x500, промокод WIN777, зеркало lucky-win-kz.bet, каспи +7 776 902 33 18"))
+def test_index_refreshes_after_new_ingest(pruf: Pruf, inspector: Inspector, monkeypatch: pytest.MonkeyPatch) -> None:
+    casino = "Казино с выводом! Поднял x500, промокод WIN777, зеркало lucky-win-kz.bet, каспи +7 776 902 33 18"
+    pruf.ingest(Submission(text=casino, channel="@slots_a"))
+    inspector.refresh(pruf.version)
+    assert "lucky-win-kz.bet" not in inspector.blacklist()  # один канал: мало, и индекс ещё не устарел
+    pruf.ingest(Submission(text=casino + "!", channel="@slots_b"))
+    inspector.refresh(pruf.version)
+    assert "lucky-win-kz.bet" not in inspector.blacklist()  # пересборка не чаще INDEX_MIN_AGE
+    monkeypatch.setattr(inspect_mod, "INDEX_MIN_AGE", 0.0)
     inspector.refresh(pruf.version)
     assert "lucky-win-kz.bet" in inspector.blacklist()
+
+
+def test_single_channel_cannot_blacklist_a_domain(tmp_path: Path, detector) -> None:
+    p = Pruf(make_settings(tmp_path / "one"), detector=detector, ocr_enabled=False)
+    for i in range(3):
+        p.ingest(Submission(text=f"{SCAM} #{i}", channel="@one_channel"))
+    ins = Inspector(p.db, TEST_HMAC_KEY.encode())
+    ins.refresh(p.version)
+    assert ins.blacklist() == []
+    p.db.close()
 
 
 def test_text_hash_normalizes_case_and_punctuation() -> None:
@@ -88,12 +110,13 @@ def test_text_hash_normalizes_case_and_punctuation() -> None:
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="нужен Node.js")
 def test_text_hash_matches_extension() -> None:
-    samples = ["Пассивный доход 5% в день!", "Күніне 3% табыс! Достарыңды шақыр", "ÉCOLE_ｆｕｌｌ　width ١٢٣", "ё и Ё"]
+    samples = ["Пассивный доход 5% в день!", "Күніне 3% табыс! Достарыңды шақыр", "ÉCOLE_ｆｕｌｌ　width ١٢٣", "ё и Ё",
+               "Взнос на карту 4111 1111 1111 1111, итоги завтра", "Карта 4400\u200b4301 2345 6781 не по Луну"]
     script = ("const X=require(process.argv[1]);Promise.all(JSON.parse(process.argv[2]).map(X.textHash))"
               ".then(h=>console.log(JSON.stringify(h)))")
     out = subprocess.run(["node", "-e", script, str(ROOT / "extension/lib/extract.js"), json.dumps(samples)],
                          capture_output=True, text=True, check=True, timeout=30).stdout
-    assert json.loads(out) == [text_hash(s) for s in samples]
+    assert json.loads(out) == [text_hash(redact_cards(s)) for s in samples]  # сервер хэширует текст из реестра
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="нужен Node.js")
@@ -120,7 +143,7 @@ def test_inspect_endpoint_in_dev_mode(tmp_path: Path, pruf: Pruf) -> None:
         data = r.json()["data"]
         assert data["show_banner"] and data["score"] == 100
         assert client.get("/api/v1/blacklist/domains").json()["data"] == ["joy-slots-kz.top"]
-        assert pruf.db.count_posts() == 2  # проверка ничего не сохраняет
+        assert pruf.db.count_posts() == 3  # проверка ничего не сохраняет
 
 
 def test_inspect_rejects_post_text_and_oversized_fields(tmp_path: Path) -> None:

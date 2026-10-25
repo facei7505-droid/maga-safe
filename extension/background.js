@@ -24,10 +24,17 @@ async function api(path, options = {}) {
   return body;
 }
 
-async function bump(field, by = 1) {
-  const stats = (await chrome.storage.local.get({ stats: { checked: 0, threats: 0, blocked: 0 } })).stats;
-  stats[field] = (stats[field] || 0) + by;
-  await chrome.storage.local.set({ stats });
+// Счётчики обновляются по очереди: параллельные ответы иначе перезаписывают друг друга
+let statsChain = Promise.resolve();
+function bump(field, by = 1) {
+  statsChain = statsChain
+    .then(async () => {
+      const stats = (await chrome.storage.local.get({ stats: { checked: 0, threats: 0, blocked: 0 } })).stats;
+      stats[field] = (stats[field] || 0) + by;
+      await chrome.storage.local.set({ stats });
+    })
+    .catch((err) => console.warn("ПРУФ: счётчик не обновлён", err));
+  return statsChain;
 }
 
 async function inspect(payload) {
@@ -48,7 +55,8 @@ function blacklistRules(domains) {
     id: i + 1,
     priority: 1,
     action: { type: "redirect", redirect: { regexSubstitution: warning + "#\\0" } },
-    condition: { regexFilter: `^https?://([a-z0-9-]+\\.)*${escapeRegex(domain)}([/:?#].*)?$`, resourceTypes: ["main_frame"] },
+    // «\.?» после домена: полное имя с точкой в конце (evil.kz./) тоже перехватывается
+    condition: { regexFilter: `^https?://([a-z0-9-]+\\.)*${escapeRegex(domain)}\\.?([/:?#].*)?$`, resourceTypes: ["main_frame"] },
   }));
 }
 

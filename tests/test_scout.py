@@ -88,10 +88,38 @@ def test_scout_posts_go_to_registry_once(pruf: Pruf) -> None:
     assert pruf.db.count_posts() == n  # повторный обход не дублирует посты
 
 
-def test_no_store_mode_writes_nothing_to_registry(pruf: Pruf) -> None:
+def test_no_store_mode_writes_nothing_and_does_not_block_real_run(pruf: Pruf) -> None:
     report = _run(pruf, ScoutConfig(keywords=(), store=False))
-    assert pruf.db.count_posts() == 0
+    assert pruf.db.count_posts() == 0 and pruf.db.scout_channels() == [] and pruf.db.scout_edges() == []
     assert len(report["risky_channels"]) == 16
+    assert len(_run(pruf)["risky_channels"]) == 16  # настоящий запуск следом не считает каналы проверенными
+
+
+def test_channel_without_text_posts_is_not_marked_clean(pruf: Pruf) -> None:
+    fixture = {"channels": {"empty_chan": {"title": "x", "posts": []}}}
+    path = pruf.settings.data_dir / "empty.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    report = _run(pruf, seeds=("empty_chan",), source=FixtureSource(path))
+    assert report["channels_checked"] == 0 and pruf.db.scout_channel("empty_chan") is None
+
+
+def test_outage_during_enqueue_stops_run(pruf: Pruf) -> None:
+    class Flaky(FixtureSource):
+        def channel_info(self, username: str):
+            if username != "iphone_razdacha_kz":
+                raise SourceUnavailable("Telegram просит подождать 300 с")
+            return super().channel_info(username)
+
+    report = _run(pruf, source=Flaky())
+    assert report["stopped"].startswith("источник недоступен") and report["channels_checked"] == 1
+
+
+def test_failed_ingest_is_retried_without_piling_up_rows(pruf: Pruf) -> None:
+    pid = pruf.db.create_post(source="scout", channel="@x", author=None, posted_at=None, text="t", external_id="tg:x/1")
+    pruf.db.mark_post_failed(pid, "boom")
+    ok = pruf.db.create_post(source="scout", channel="@x", author=None, posted_at=None, text="t", external_id="tg:x/1")
+    pruf.db.update_post_analysis(ok, score=1, level="low", track=None, analysis={"score": 1}, ocr_text=None, transcript=None)
+    assert pruf.db.find_post_by_external_id("tg:x/1")["id"] == ok
 
 
 def test_scout_never_calls_llm(tmp_path: Path, detector, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -297,6 +325,30 @@ def test_telethon_source_maps_read_only_responses() -> None:
     assert [p.channel for p in src.search_posts("+77769023318", 10)] == ["crash_aviator_kz"]
     assert src.channel_info("private_user") is None and src.channel_info("missing_chan") is None
     assert set(fake.requests) <= {"GetFullChannelRequest", "SearchRequest", "SearchGlobalRequest"}
+
+
+def test_telethon_caches_entities_and_turns_rpc_errors_into_outage() -> None:
+    errors = pytest.importorskip("telethon.errors")
+    fake = _FakeTg()
+    calls = []
+    real = fake.get_entity
+    fake.get_entity = lambda u: calls.append(u) or real(u)
+    src = TelethonSource(fake)
+    src.channel_info("kazino_vyvod_24")
+    src.recent_posts("kazino_vyvod_24", 5)
+    assert calls == ["kazino_vyvod_24"]  # ResolveUsername один раз на канал
+
+    def private(_):
+        raise errors.ChannelPrivateError(request=None)
+
+    def server_down(_):
+        raise errors.RPCError(request=None, message="INTERNAL", code=500)
+
+    fake.get_entity = private
+    assert src.channel_info("closed_chan") is None
+    fake.get_entity = server_down
+    with pytest.raises(SourceUnavailable):
+        src.channel_info("other_chan")
 
 
 def test_telethon_flood_wait_retries_once_then_stops() -> None:

@@ -41,9 +41,9 @@
   }
 
   function cleanDigits(text) {
-    // Невидимые символы и не-ASCII цифры прячут номер от регулярок: «4400​4301…», «+７…»
+    // Невидимые символы и не-ASCII цифры прячут номер от регулярок: «4400\u200b4301…», «+７…»
     return text
-      .replace(/[­​-‏⁠﻿]/g, "")
+      .replace(/\p{Cf}/gu, "") // как clean_digits на сервере: все невидимые символы формата
       .replace(/\p{Nd}/gu, (ch) => {
         const cp = ch.codePointAt(0);
         if (cp < 128) return ch;
@@ -91,9 +91,17 @@
     return Object.keys(CUE_PATTERNS).filter((id) => CUE_PATTERNS[id].test(folded));
   }
 
-  // Тот же хэш считает сервер (pruf/inspect.py: text_hash)
+  // Реестр хранит текст с картами под маской 6+4 (redact_cards): хэшируем так же, иначе копия не совпадёт
+  function redactCards(text) {
+    return cleanDigits(text || "").replace(CARD_RE, (m) => {
+      const digits = m.replace(/\D/g, "");
+      return luhnOk(digits) ? `${digits.slice(0, 6)}******${digits.slice(-4)}` : m;
+    });
+  }
+
+  // Тот же хэш считает сервер (pruf/inspect.py: text_hash от текста из реестра)
   function foldForHash(text) {
-    return (text || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    return redactCards(text).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   }
 
   async function textHash(text) {

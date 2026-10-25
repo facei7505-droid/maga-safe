@@ -192,7 +192,8 @@ class Database:
         return post
 
     def find_post_by_external_id(self, external_id: str) -> dict[str, Any] | None:
-        row = self._one("SELECT id FROM posts WHERE external_id=? ORDER BY id LIMIT 1", (external_id,))
+        # Успешно разобранный пост важнее упавших попыток, иначе каждый повтор создавал бы новую строку
+        row = self._one("SELECT id FROM posts WHERE external_id=? ORDER BY status='ok' DESC, id DESC LIMIT 1", (external_id,))
         return self.get_post(row["id"]) if row else None
 
     def get_posts(self, ids: Iterable[int]) -> list[dict[str, Any]]:
@@ -360,7 +361,7 @@ class Database:
     def risky_domains(self, limit: int = 5000) -> list[dict[str, Any]]:
         """Домены из постов высокого риска (ссылки на бренды и мессенджеры сюда не пишутся при приёме)."""
         return self._all(
-            "SELECT l.domain, COUNT(DISTINCT p.id) AS posts, MAX(p.score) AS max_score FROM links l "
+            "SELECT l.domain, COUNT(DISTINCT p.id) AS posts, COUNT(DISTINCT p.channel) AS channels, MAX(p.score) AS max_score FROM links l "
             "JOIN posts p ON p.id=l.post_id WHERE p.level='high' GROUP BY l.domain ORDER BY posts DESC, l.domain LIMIT ?",
             (limit,))
 

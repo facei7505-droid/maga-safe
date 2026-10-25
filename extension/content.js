@@ -5,11 +5,14 @@
   "use strict";
 
   const { buildPayload, worthChecking } = globalThis.PrufExtract;
-  // Telegram Web A (.text-content), Telegram Web K (.message), Instagram (article)
-  const POST_SELECTORS = [".text-content", ".bubble .message", ".message .translatable-message", "article"];
+  // Telegram Web A (.text-content), Telegram Web K (.message), Instagram (article). Один селектор на площадку,
+  // чтобы вложенные элементы одного поста не проверялись дважды.
+  const POST_SELECTORS = [".text-content", ".bubble .message", "article"];
   const MIN_TEXT = 30;
   const MAX_TEXT = 4000;
   const DONE_ATTR = "data-pruf";
+  const LEN_ATTR = "data-pruf-len";
+  const RESCAN_STATES = new Set(["short", "clean"]); // пост дописался позже (подпись Instagram, «ещё», правка)
   const results = new Map(); // хэш текста → ответ сервера: одинаковые репосты не проверяем дважды
   const queue = [];
   let busy = false;
@@ -26,6 +29,7 @@
 
   function schedule(el) {
     if (el.hasAttribute(DONE_ATTR) || el.closest(".pruf-host")) return;
+    if (el.parentElement && el.parentElement.closest(`[${DONE_ATTR}]`)) return; // пост уже взят целиком
     el.setAttribute(DONE_ATTR, "queued");
     queue.push(el);
     if (!busy) drain();
@@ -47,6 +51,7 @@
 
   async function inspect(el) {
     const text = (el.innerText || "").slice(0, MAX_TEXT);
+    el.setAttribute(LEN_ATTR, String(text.length));
     if (text.trim().length < MIN_TEXT) {
       el.setAttribute(DONE_ATTR, "short");
       return;
@@ -110,13 +115,24 @@
     el.prepend(host);
   }
 
+  function rescanIfGrown(target) {
+    const node = target.nodeType === Node.ELEMENT_NODE ? target : target.parentElement;
+    const post = node && node.closest(`[${DONE_ATTR}]`);
+    if (!post || !RESCAN_STATES.has(post.getAttribute(DONE_ATTR))) return;
+    if (String((post.innerText || "").slice(0, MAX_TEXT).length) === post.getAttribute(LEN_ATTR)) return;
+    post.removeAttribute(DONE_ATTR);
+    schedule(post);
+  }
+
   const observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
+      if (m.target.nodeType === Node.ELEMENT_NODE ? m.target.closest(".pruf-host") : false) continue;
       for (const node of m.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE && !node.closest(".pruf-host")) postElements(node).forEach(schedule);
       }
+      rescanIfGrown(m.target);
     }
   });
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   postElements(document.body).forEach(schedule);
 })();

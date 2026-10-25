@@ -29,12 +29,14 @@ TELEGRAM_PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><title>Tele
 <div class="bubbles">
   <div class="bubble" id="scam"><div class="message">{SCAM}</div></div>
   <div class="bubble" id="chat"><div class="message">Привет! Встречаемся вечером у фонтана, захвати зонт, обещали дождь</div></div>
+  <div class="bubble" id="grow"><div class="message">Загрузка…</div></div>
 </div>
 <script>
   setTimeout(() => {{
     const b = document.createElement('div'); b.className = 'bubble'; b.id = 'late';
     b.innerHTML = '<div class="message">Казино бонус 200% на депозит! Поднял x500 на слотах, промокод WIN777, зеркало <a href="https://joy-slots-kz.top">joy-slots-kz.top</a></div>';
     document.querySelector('.bubbles').appendChild(b);
+    document.querySelector('#grow .message').textContent = 'Касса взаимопомощи: удвоим вклад за неделю, гарантия выплат, пригласи друзей и получай 10%';
   }}, 300);
 </script></body></html>"""
 
@@ -44,8 +46,9 @@ def server(tmp_path_factory: pytest.TempPathFactory, detector):
     os.environ.pop("WEB_CONCURRENCY", None)
     settings = make_settings(tmp_path_factory.mktemp("e2e-ext"))
     pruf = Pruf(settings, detector=detector, ocr_enabled=False)
-    pruf.ingest(Submission(text="Казино с выводом! Поднял x500, промокод WIN777, зеркало joy-slots-kz.top, каспи +7 776 902 33 18",
-                           channel="@kazino_demo"))
+    for ch in ("@kazino_demo", "@slots_demo"):
+        pruf.ingest(Submission(text=f"Казино с выводом! Поднял x500, промокод WIN777, зеркало joy-slots-kz.top, каспи +7 776 902 33 18 {ch}",
+                               channel=ch))
     port = _free_port()
     srv = uvicorn.Server(uvicorn.Config(create_app(settings, pruf=pruf), host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=srv.run, daemon=True)
@@ -84,7 +87,9 @@ def test_banner_appears_over_scam_post_only(context) -> None:
     text = banner.evaluate("h => h.shadowRoot.textContent")
     assert "Признаки финансовой пирамиды" in text and "обещание дохода" in text
     page.locator("#late .pruf-host").wait_for(state="attached", timeout=10_000)  # пост, пришедший позже
+    page.locator("#grow .pruf-host").wait_for(state="attached", timeout=10_000)  # пост дописался после первой проверки
     assert page.locator("#chat .pruf-host").count() == 0
+    assert page.locator("#scam .pruf-host").count() == 1
     reasons = banner.evaluate("h => { h.shadowRoot.querySelector('button').click(); "
                               "return [...h.shadowRoot.querySelectorAll('li')].map(li => li.textContent) }")
     assert any("Доход за приглашённых" in r for r in reasons)
@@ -107,6 +112,17 @@ def test_blacklisted_domain_redirects_to_warning(context) -> None:
     ctx.route("https://promo.joy-slots-kz.top/**", lambda route: route.fulfill(status=200, body="landing"))
     page.click("#proceed")
     page.wait_for_url("https://promo.joy-slots-kz.top/bonus?ref=1", timeout=10_000)
+    page.close()
+
+
+def test_trailing_dot_hostname_is_also_redirected(context) -> None:
+    ctx, _ = context
+    page = ctx.new_page()
+    try:
+        page.goto("https://joy-slots-kz.top./")
+    except playwright_api.Error:
+        pass
+    page.wait_for_url(re.compile(r"^chrome-extension://[a-z]+/warning\.html#"), timeout=10_000)
     page.close()
 
 

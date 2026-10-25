@@ -51,18 +51,37 @@ DOMAIN_WEIGHT = 40
 TEXT_COPY_WEIGHT = 50
 MAX_SCORE = 100
 INDEX_MAX_AGE = 600.0  # разведчик пишет в базу из своего процесса: раз в 10 минут перечитываем
+INDEX_MIN_AGE = 30.0  # при потоке приёма индекс пересобирается не чаще раза в 30 секунд
+BLACKLIST_MIN_CHANNELS = 2  # один канал не может сам внести домен в чёрный список
+# Публичные суффиксы: под ними сайты разных владельцев, блокировать суффикс целиком нельзя
+PUBLIC_SUFFIXES = frozenset({
+    "com.kz", "org.kz", "net.kz", "edu.kz", "mil.kz", "gov.kz", "co.uk", "com.ru", "org.ru", "net.ru", "github.io",
+    "pages.dev", "vercel.app", "netlify.app", "web.app", "firebaseapp.com", "herokuapp.com", "blogspot.com",
+    "appspot.com", "workers.dev", "glitch.me", "onrender.com",
+})
+# Популярные площадки: ссылка на них в скам-посте («как на apple.com») не делает их опасными
+POPULAR_DOMAINS = frozenset({
+    "apple.com", "wikipedia.org", "facebook.com", "x.com", "twitter.com", "whatsapp.com", "telegram.org", "github.com",
+    "microsoft.com", "yandex.kz", "yandex.ru", "mail.ru", "olx.kz", "kolesa.kz", "krisha.kz", "wildberries.kz", "ozon.kz",
+    "binance.com", "bybit.com", "forte.kz", "jusan.kz", "bcc.kz", "homecredit.kz", "freedombank.kz", "kase.kz",
+})
 _DOMAIN_RE = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 
 
 def text_hash(text: str) -> str:
-    """Тот же хэш считает расширение: NFKC, нижний регистр, всё кроме букв и цифр → один пробел."""
+    """Тот же хэш считает расширение: NFKC, нижний регистр, всё кроме букв и цифр → один пробел.
+    Хэшируется текст в том виде, как он хранится в реестре (redact_cards: карты маской 6+4)."""
     folded = re.sub(r"[\W_]+", " ", unicodedata.normalize("NFKC", text).lower()).strip()
     return hashlib.sha256(folded.encode()).hexdigest()
 
 
 def blacklist_domain(domain: str) -> bool:
-    """Домен можно отдать в чёрный список: валидное имя, не банк, не соцсеть, не сокращатель."""
-    return bool(_DOMAIN_RE.match(domain)) and domain not in ALLOWLIST_DOMAINS | MESSENGER_HOSTS | SHORTENERS
+    """Домен можно отдать в чёрный список: валидное имя, не публичный суффикс, не банк, не госсайт,
+    не соцсеть и не сокращатель, включая их поддомены (kgd.gov.kz, pay.kaspi.kz)."""
+    if not _DOMAIN_RE.match(domain) or domain in PUBLIC_SUFFIXES:
+        return False
+    protected = ALLOWLIST_DOMAINS | MESSENGER_HOSTS | SHORTENERS | POPULAR_DOMAINS
+    return not any(domain == p or domain.endswith("." + p) for p in protected)
 
 
 class Inspector:
@@ -71,17 +90,19 @@ class Inspector:
         self._key = hmac_key
         self._lock = threading.Lock()
         self._version = -1
-        self._built_at = 0.0
+        self._built_at = -INDEX_MAX_AGE
         self._hashes: frozenset[str] = frozenset()
         self._domains: frozenset[str] = frozenset()
 
     def refresh(self, version: int) -> None:
         """Индексы рискованных текстов и доменов пересобираются после приёма или раз в INDEX_MAX_AGE."""
         with self._lock:
-            if version == self._version and time.monotonic() - self._built_at < INDEX_MAX_AGE:
+            age = time.monotonic() - self._built_at
+            if age < INDEX_MIN_AGE or (version == self._version and age < INDEX_MAX_AGE):
                 return
             self._hashes = frozenset(text_hash(t) for t in self._db.risky_texts())
-            self._domains = frozenset(d["domain"] for d in self._db.risky_domains() if blacklist_domain(d["domain"]))
+            self._domains = frozenset(d["domain"] for d in self._db.risky_domains()
+                                      if d["channels"] >= BLACKLIST_MIN_CHANNELS and blacklist_domain(d["domain"]))
             self._version = version
             self._built_at = time.monotonic()
 

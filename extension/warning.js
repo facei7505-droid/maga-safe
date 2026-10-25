@@ -18,7 +18,8 @@
     else window.close();
   });
   const proceed = document.getElementById("proceed");
-  if (!okUrl) proceed.hidden = true;
+  // В рамке на чужой странице «перейти» не показываем: иначе сайт заманит на клик и снимет блокировку
+  if (!okUrl || window.top !== window) proceed.hidden = true;
   proceed.addEventListener("click", async () => {
     const reply = await chrome.runtime.sendMessage({ type: "allow", domain: url.hostname });
     if (reply && reply.ok) location.replace(url.href);

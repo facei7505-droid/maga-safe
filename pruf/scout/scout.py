@@ -45,7 +45,7 @@ class ScoutConfig:
     posts_per_channel: int = 30
     expand_threshold: float = HIGH_THRESHOLD  # от канала с таким риском идём дальше
     keywords: tuple[str, ...] = DEFAULT_KEYWORDS
-    search_limit: int = 20
+    search_limit: int = 10
     store: bool = True  # писать посты в реестр ПРУФ; False — только проверка
     allow_llm: bool = False  # Claude по умолчанию не зовём: разведка не тратит бюджет API
     recheck_risky: timedelta = timedelta(hours=6)
@@ -137,10 +137,7 @@ class Scout:
             return
         info = None
         if cand.via != "seed":
-            try:
-                info = self.source.channel_info(name)
-            except SourceUnavailable as exc:
-                log.warning("карточка %s недоступна: %s", name, exc)
+            info = self.source.channel_info(name)  # SourceUnavailable останавливает запуск в run()
             if info is None:
                 return  # нет такого публичного канала
             self._info[name] = info
@@ -163,7 +160,8 @@ class Scout:
     def _edge(self, src: str, dst: str, via: str, detail: str = "") -> None:
         if src != dst and (src, dst, via, detail) not in self.edges:
             self.edges.add((src, dst, via, detail))
-            self.pruf.db.scout_add_edge(src, dst, via, detail)
+            if self.config.store:  # пробный запуск (--no-store) ничего не пишет и не мешает следующему
+                self.pruf.db.scout_add_edge(src, dst, via, detail)
 
     # ---------- запуск ----------
     def run(self, seeds: list[str]) -> dict[str, Any]:
@@ -172,10 +170,12 @@ class Scout:
                 name = normalize_username(raw)
                 if name:
                     self.enqueue(Candidate(name, 0, None, "seed"))
-            self._keyword_search()
-            while self._heap and len(self.results) < self.config.max_channels:
-                _, _, cand = heapq.heappop(self._heap)
-                self._visit(cand)
+            self._drain()
+            # Поиск по словам после снежного кома: он дорогой (карточка на каждый результат) и тратит
+            # бюджет запросов только если от семян он ещё остался
+            if len(self.results) < self.config.max_channels:
+                self._keyword_search()
+                self._drain()
             if self._heap and not self.stopped:
                 self.stopped = f"достигнут лимит {self.config.max_channels} каналов"
         except BudgetExceeded as exc:
@@ -183,6 +183,11 @@ class Scout:
         except SourceUnavailable as exc:
             self.stopped = f"источник недоступен: {exc}"
         return self.report()
+
+    def _drain(self) -> None:
+        while self._heap and len(self.results) < self.config.max_channels:
+            _, _, cand = heapq.heappop(self._heap)
+            self._visit(cand)
 
     def _keyword_search(self) -> None:
         for phrase in self.config.keywords:
@@ -194,8 +199,18 @@ class Scout:
         if info is None:
             return
         posts = self.source.recent_posts(cand.username, self.config.posts_per_channel)
+        if not posts:
+            log.info("%s: нет постов с текстом, не помечаем чистым", cand.username)
+            return
         result = self._score_channel(cand, posts)
         self.results[cand.username] = result
+        if self.config.store:
+            self._save(cand, info, result)
+        log.info("%s: риск %.0f (%s), постов %d", cand.username, result.risk, result.level, result.posts_checked)
+        if result.risk >= self.config.expand_threshold:
+            self._expand(cand, posts, result)
+
+    def _save(self, cand: Candidate, info: ChannelInfo, result: ChannelResult) -> None:
         self.pruf.db.scout_save_channel({
             "username": cand.username, "title": info.title, "subscribers": info.subscribers, "created_at": info.created_at,
             "risk": result.risk, "level": result.level, "track": result.track, "posts_checked": result.posts_checked,
@@ -203,9 +218,6 @@ class Scout:
             "found_via": cand.via, "found_from": cand.parent, "found_detail": cand.detail or None, "depth": cand.depth,
             "last_checked": self.now.isoformat(timespec="seconds"),
         })
-        log.info("%s: риск %.0f (%s), постов %d", cand.username, result.risk, result.level, result.posts_checked)
-        if result.risk >= self.config.expand_threshold:
-            self._expand(cand, posts, result)
 
     def _score_channel(self, cand: Candidate, posts: list[ScoutPost]) -> ChannelResult:
         scores: list[float] = []

@@ -16,5 +16,5 @@
   "action": { "default_popup": "popup.html", "default_title": "ПРУФ Sentinel" },
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "web_accessible_resources": [{ "resources": ["warning.html", "warning.js", "pages.css"], "matches": ["<all_urls>"] }],
-  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'" }
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; frame-ancestors 'none'" }
 }
