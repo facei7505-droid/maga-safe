@@ -1,6 +1,7 @@
 // ПРУФ: дашборд аналитика. Без сборки и внешних библиотек.
 // Весь текст из постов выводится только через textContent (посты недоверенные).
 import { graphView } from "./graph.js";
+import { networkPanel } from "./network.js";
 import {
   $, LEVEL, REQ_TYPE, SOURCE, STATUS, TRACK, api, badge, chips, day, el, lazyImg, releaseImages, showError, toast, token, when,
 } from "./lib.js";
@@ -175,6 +176,7 @@ function renderCase(d) {
       c.domains.length ? el("div", {}, el("span", { class: "muted" }, "Домены: "), c.domains.join(", ")) : null,
     ),
     el("p", { class: "note" }, "Система показывает признаки, а не вердикт. Решение по кейсу принимает аналитик."),
+    d.network ? networkPanel(d.network) : null,
     el("div", { class: "grid2" },
       el("div", {},
         el("h3", {}, "Граф связей ", el("span", { class: "muted small" }, "наведите на узел, клик по посту — к посту")),

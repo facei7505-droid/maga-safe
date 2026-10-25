@@ -288,7 +288,13 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             posts.append(post)
         status = p.db.case_statuses().get(key, {"status": "new", "note": None})
         return ok({"case": case.to_dict(), "status": status, "posts": posts, "graph": g.subgraph(case.post_ids),
-                   "families": g.families(case.post_ids)})
+                   "families": g.families(case.post_ids), "network": g.case_network(key)})
+
+    @app.get("/api/v1/networks")
+    def list_networks(limit: int = Query(20, ge=1, le=100), actor: str = Depends(analyst)):
+        """Сети каналов с общими реквизитами и ключевой реквизит каждой: что заблокировать в первую очередь."""
+        items = graph().networks()
+        return ok(items[:limit], total=len(items), limit=limit)
 
     @app.patch("/api/v1/cases/{key}")
     def update_case(key: str, body: CaseUpdate, actor: str = Depends(analyst)):

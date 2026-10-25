@@ -336,3 +336,30 @@ img.broken { visibility: hidden; }
 .scout-shared { margin: 0; padding-left: 18px; line-height: 1.9; overflow-wrap: anywhere; }
 #scout .panel { margin-bottom: var(--gap); }
 @media (max-width: 860px) { .scout-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* «Что заблокировать»: ключевые реквизиты сети */
+.net-grid { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 24px; align-items: start; }
+.net-keys { display: flex; flex-direction: column; gap: 10px; }
+.net-key { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; cursor: pointer; }
+.net-key.top { border-color: var(--high-line); background: var(--high-soft); }
+.net-key input { margin-top: 3px; }
+.net-tag { margin-left: 6px; font-size: 11px; font-weight: 600; color: var(--high); text-transform: uppercase; letter-spacing: .04em; }
+.net-effect { border-top: 1px dashed var(--line-2); padding-top: 10px; line-height: 1.5; }
+.net-cut { margin-top: 4px; word-break: break-word; }
+.net-pic { overflow-x: auto; }
+.net-svg { width: 100%; min-width: 520px; height: auto; font: 11px var(--mono); }
+.net-svg .ne { stroke: var(--line-2); stroke-width: 1; }
+.net-svg .ne.off { stroke: var(--high); stroke-dasharray: 3 3; opacity: .45; }
+.net-svg .nm rect { fill: var(--req); }
+.net-svg .nm.link rect { fill: var(--muted); }
+.net-svg .nm text, .net-svg .nc text { fill: var(--ink-2); }
+.net-svg .nm.off rect { fill: #fff; stroke: var(--high); stroke-width: 2.5; }
+.net-svg .nm.off text { fill: var(--high); text-decoration: line-through; font-weight: 700; }
+.net-svg .nc circle { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
+.net-svg .nc.cut circle { stroke: var(--line-2); fill: var(--panel-2); }
+.net-svg .nc.cut text { fill: var(--muted); text-decoration: line-through; }
+.nets-list { display: flex; flex-direction: column; gap: 16px; }
+.nets-list details > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; padding: 4px 0; }
+.nets-list details > summary::-webkit-details-marker { display: none; }
+.nets-list details[open] > summary { margin-bottom: 12px; }
+@media (max-width: 900px) { .net-grid { grid-template-columns: 1fr; } }

@@ -1,5 +1,6 @@
 // ПРУФ: вкладка «Разведка» — каналы, которые агент-разведчик нашёл сам (python -m pruf.scout).
 import { $, api, badge, chips, el, showError, when } from "./lib.js";
+import { networkPanel } from "./network.js";
 
 const VIA = { seed: "семя", requisite: "общий реквизит", forward: "репост", domain: "общий домен", link: "ссылка t.me",
               mention: "@упоминание", search: "поиск по словам" };
@@ -8,8 +9,8 @@ export async function loadScout() {
   const root = $("#scout");
   root.replaceChildren(el("p", { class: "muted" }, "Загрузка…"));
   try {
-    const { data } = await api("/api/v1/scout");
-    root.replaceChildren(...render(data));
+    const [{ data }, nets] = await Promise.all([api("/api/v1/scout"), api("/api/v1/networks?limit=5")]);
+    root.replaceChildren(networksSection(nets.data), ...render(data));
   } catch (err) { showError(root, err); }
 }
 
@@ -32,6 +33,22 @@ function render({ channels, edges }) {
         el("thead", {}, el("tr", {}, ["Канал", "Риск", "Трек", "Как нашли", "Откуда", "Постов со схемой", "Подписчики", "Проверен"]
           .map((h) => el("th", {}, h)))),
         el("tbody", {}, channels.map(row)))))];
+}
+
+// Сети по всей базе: и найденные разведчиком, и пришедшие из жалоб и бота
+function networksSection(nets) {
+  if (!nets.length) return null;
+  return el("section", { class: "panel" },
+    el("h3", {}, "Сети и ключевые реквизиты ", el("span", { class: "muted small" }, "каналы, связанные общими номерами, ссылками Kaspi и доменами")),
+    el("div", { class: "nets-list" }, nets.map((n, i) => {
+      const key = n.key_nodes[0];
+      const box = el("details", i === 0 ? { open: "" } : {},
+        el("summary", {}, el("b", {}, `Сеть ${n.key}: ${n.channels.length} каналов`), chips(n.tracks),
+          key ? el("span", {}, "ключевой реквизит ", el("b", { class: "mono" }, key.label),
+            el("span", { class: "muted" }, ` · отрежет от денег ${key.cut_off.length} из ${n.channels.length}`)) : null));
+      box.append(networkPanel(n, { title: "Что если заблокировать" }) || el("p", { class: "muted" }, "Нет реквизитов для блокировки."));
+      return box;
+    })));
 }
 
 function kpi(value, label) {

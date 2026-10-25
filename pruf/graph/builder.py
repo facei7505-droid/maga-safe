@@ -20,6 +20,7 @@ from typing import Any
 
 import networkx as nx
 
+from pruf.graph import network
 from pruf.pipeline import ALLOWLIST_DOMAINS, RISKY_LEVELS
 from pruf.registry.imagediff import diff_tokens
 from pruf.registry.registry import changes_to_json, tokens_from_json
@@ -110,6 +111,7 @@ class CaseGraph:
         self.graph = nx.Graph()
         self._cases: dict[str, CaseSummary] = {}
         self._case_of_post: dict[int, str] = {}
+        self._networks: list[dict[str, Any]] | None = None
 
     def ensure(self, version: int, force: bool = False) -> None:
         """Пересобрать граф, если были новые посты. Маленький граф пересобирается сразу; большой
@@ -153,6 +155,7 @@ class CaseGraph:
         self.graph = g
         self._linking = nx.Graph((u, v) for u, v, d in g.edges(data=True) if d["type"] in LINK_EDGES)
         self._cases, self._case_of_post = self._compute_cases(g, posts)
+        self._networks = None  # считаются по первому запросу
 
     @staticmethod
     def _hubs(g: nx.Graph, posts: dict[int, dict]) -> set[str]:
@@ -231,6 +234,19 @@ class CaseGraph:
 
     def case(self, key: str) -> CaseSummary | None:
         return self._cases.get(key)
+
+    def networks(self) -> list[dict[str, Any]]:
+        with self._lock:
+            if self._networks is None:
+                self._networks = network.networks(self.graph)
+            return self._networks
+
+    def case_network(self, key: str) -> dict[str, Any] | None:
+        """Сеть каналов кейса и ключевые реквизиты: что заблокировать, чтобы отрезать схему от денег."""
+        case = self._cases.get(key)
+        if not case:
+            return None
+        return network.describe(network.money_graph(self.graph, case.post_ids), key)
 
     def case_for_post(self, post_id: int) -> str | None:
         return self._case_of_post.get(post_id)
