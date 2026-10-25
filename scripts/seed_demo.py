@@ -99,7 +99,7 @@ def seed_background(pruf: Pruf, tmp: Path, campaigns_per_track: int, legit: int,
         if p.image:
             uploads = (Upload((tmp / p.image).read_bytes(), "image", "jpg"),)
         pruf.ingest(Submission(text=p.text, uploads=uploads, source="seed", channel=p.channel, posted_at=_shifted(p.posted_at, shift),
-                               external_id=p.id, label=p.label))
+                               external_id=p.id, label=p.label), allow_llm=False)  # демо не тратит бюджет Claude
     return len(posts)
 
 
@@ -121,7 +121,7 @@ def seed_hero(pruf: Pruf, rng: random.Random, shift: timedelta = timedelta()) ->
         data = to_jpeg(img, 90) if i == 0 else repost_variant(img, rng, channel)
         text = rng.choice(HERO_TEXTS[track]).format(phone=OPERATOR_PHONE)
         pruf.ingest(Submission(text=text, uploads=(Upload(data, "image", "jpg"),), source="seed", channel=channel,
-                               posted_at=when.isoformat(timespec="seconds"), external_id=f"hero{i:02d}", label=track))
+                               posted_at=when.isoformat(timespec="seconds"), external_id=f"hero{i:02d}", label=track), allow_llm=False)
         counts[track] += 1
     return counts
 
