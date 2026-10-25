@@ -102,6 +102,8 @@ def test_analyst_flow_end_to_end(server: str, browser) -> None:
     page.locator("#bank-form button").click()
     page.wait_for_selector(".verdict")
     assert "встречается" in page.locator(".verdict").inner_text()
+    page.wait_for_function("document.querySelector('#reports-total').textContent.includes('всего жалоб')")
+    assert "Жалоб пока нет" in page.locator("#report-rows").inner_text()
 
     # отчёт для печати
     report = browser.new_page()

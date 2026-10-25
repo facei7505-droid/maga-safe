@@ -159,3 +159,26 @@ def test_case_card_and_networks_endpoint_show_key_requisite(tmp_path):
     assert sorted(net["key_nodes"][0]["cut_off"]) == ["@loto1", "@slots2"]
     assert nets["success"] is True and nets["meta"]["total"] == 1
     assert nets["data"][0]["key_nodes"][0]["label"] == net["key_nodes"][0]["label"]
+
+
+def test_requisite_added_later_is_reported_as_rotation():
+    # Сеть началась с одного номера, через неделю два канала перешли на новый
+    g = nx.Graph()
+    _post(g, 1, "@a", money=["req:+77000000001"])
+    _post(g, 2, "@b", money=["req:+77000000001"])
+    _post(g, 3, "@a", money=["req:+77000000009"])
+    _post(g, 4, "@b", money=["req:+77000000009", "domain:new-site.top"])
+    for pid, when in ((1, "2026-10-01T10:00:00"), (2, "2026-10-02T10:00:00"), (3, "2026-10-08T09:00:00"), (4, "2026-10-09T09:00:00")):
+        g.nodes[f"post:{pid}"]["posted_at"] = when
+
+    net = network.networks(g)[0]
+
+    assert net["since"] == "2026-10-01"
+    assert [(f["label"], f["first_seen"]) for f in net["fresh"]] == [("new-site.top", "2026-10-09"), ("+77000000009", "2026-10-08")]
+    assert net["fresh"][1]["channels"] == ["@a", "@b"]
+
+
+def test_network_without_dates_has_no_rotation():
+    net = network.networks(_pyramid())[0]
+
+    assert net["since"] is None and net["fresh"] == []

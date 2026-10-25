@@ -49,6 +49,9 @@ CUES: dict[str, Cue] = {
 REQUISITE_WEIGHT = 35
 DOMAIN_WEIGHT = 40
 TEXT_COPY_WEIGHT = 50
+REPORT_WEIGHT = 20
+REPORT_MIN_REPORTERS = 3  # жалобы одного-двух человек не меняют оценку: иначе конкурента легко оговорить
+REPORT_PLATFORMS = ("telegram", "instagram", "whatsapp", "other")
 MAX_SCORE = 100
 INDEX_MAX_AGE = 600.0  # разведчик пишет в базу из своего процесса: раз в 10 минут перечитываем
 INDEX_MIN_AGE = 30.0  # при потоке приёма индекс пересобирается не чаще раза в 30 секунд
@@ -126,6 +129,9 @@ class Inspector:
                             "label": "Этот номер или реквизит уже встречался в постах с признаками схем", "weight": REQUISITE_WEIGHT})
             for t in tracks:
                 track_points[t] = track_points.get(t, 0) + REQUISITE_WEIGHT // max(len(tracks), 1)
+        if any(r["reported"] for r in checked):
+            reasons.append({"id": "registry.reports", "short": "жалобы пользователей",
+                            "label": "На этот реквизит уже жаловались несколько пользователей ПРУФ", "weight": REPORT_WEIGHT})
         bad_domains = sorted({link.domain for link in extract_links(" ".join(links)) if link.domain in self._domains})
         if bad_domains:
             reasons.append({"id": "registry.domain", "short": "сайт в чёрном списке",
@@ -141,15 +147,25 @@ class Inspector:
                 "requisites": checked, "blacklisted_domains": bad_domains}
 
     def _check_requisites(self, values: list[str]) -> list[dict[str, Any]]:
+        reqs = [r for r in extract_requisites("\n".join(values), self._key) if r.kind != "promo"]
+        reporters = self._db.report_reporters(r.key for r in reqs)
         out = []
-        for req in extract_requisites("\n".join(values), self._key):
-            if req.kind == "promo":
-                continue
+        for req in reqs:
             found = self._db.lookup_requisite(req.key)
             # Без счётчиков и каналов: расширение отвечает «засвечен или нет», а не раскрывает базу
             out.append({"type": req.kind, "value": req.display, "found": bool(found),
-                        "tracks": sorted(set((found["tracks"] or "").split(",")) - {""}) if found else []})
+                        "tracks": sorted(set((found["tracks"] or "").split(",")) - {""}) if found else [],
+                        "reported": reporters.get(req.key, 0) >= REPORT_MIN_REPORTERS})
         return out
+
+    def report(self, reporter: str, platform: str, requisites: list[str], links: list[str], digest: str,
+               cues: list[str]) -> bool:
+        """Жалоба из расширения: только извлечённое (реквизиты, домены, хэш, признаки), без текста поста."""
+        reqs = [(r.kind, r.key, r.display) for r in extract_requisites("\n".join(requisites), self._key) if r.kind != "promo"]
+        domains = sorted({link.domain for link in extract_links(" ".join(links)) if blacklist_domain(link.domain)})
+        return self._db.add_report(reporter=reporter, platform=platform if platform in REPORT_PLATFORMS else "other",
+                                   text_hash=digest, cues=[c for c in dict.fromkeys(cues) if c in CUES],
+                                   domains=domains, requisites=reqs)
 
 
 def _title(track: str | None, reasons: list[dict[str, Any]]) -> str:

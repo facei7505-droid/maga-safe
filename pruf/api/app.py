@@ -38,7 +38,7 @@ from pruf.bot.telegram import BotLogic, HttpTelegramApi
 from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
 from pruf.graph.builder import CaseGraph, artifact_timeline
-from pruf.inspect import Inspector
+from pruf.inspect import REPORT_PLATFORMS, Inspector
 from pruf.normalize.audio import transcribe, whisper_available
 from pruf.normalize.ocr import ocr_available
 from pruf.normalize.requisites import extract_requisites
@@ -100,6 +100,18 @@ class InspectIn(BaseModel):
         if any(len(i) > 2048 for i in items):
             raise ValueError("слишком длинная ссылка")
         return items
+
+
+class ReportIn(InspectIn):
+    """Жалоба «Сообщить в ПРУФ»: то же извлечённое, что для проверки, плюс площадка и случайный id установки."""
+    text_hash: str = Field(pattern="^[0-9a-f]{64}$")
+    platform: str = Field(default="other", max_length=16)
+    install_id: str = Field(min_length=8, max_length=64, pattern="^[A-Za-z0-9-]+$")
+
+    @field_validator("platform")
+    @classmethod
+    def _platform(cls, value: str) -> str:
+        return value if value in REPORT_PLATFORMS else "other"
 
 
 class CaseUpdate(BaseModel):
@@ -426,6 +438,25 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     def inspect_post(body: InspectIn, actor: str = Depends(extension)):
         """Риск поста по извлечённым признакам; текст поста сюда не приходит и ничего не сохраняется."""
         return ok(inspector().inspect(body.requisites, body.links, body.text_hash, body.cues))
+
+    @app.post("/api/v1/reports")
+    def report_post(body: ReportIn, actor: str = Depends(extension)):
+        """Жалоба пользователя. Кто жалуется, хранится только как HMAC от токена и id установки."""
+        if not (body.requisites or body.links or body.cues):
+            raise HTTPException(status_code=422, detail="В жалобе нет ни реквизитов, ни ссылок, ни признаков")
+        reporter = hmac.new(core().settings.effective_hmac_key(), f"{actor}|{body.install_id}".encode(), "sha256").hexdigest()[:24]
+        accepted = inspector().report(reporter, body.platform, body.requisites, body.links, body.text_hash, body.cues)
+        core().db.audit(actor, "user_report", body.platform)
+        return ok({"accepted": accepted})
+
+    @app.get("/api/v1/reports")
+    def reports_list(limit: int = Query(default=100, ge=1, le=500), actor: str = Depends(analyst)):
+        """Реквизиты из жалоб: сначала те, на которые жаловалось больше разных людей."""
+        db = core().db
+        rows = [{"type": r["kind"], "value": r["display"], "reporters": r["reporters"], "reports": r["reports"],
+                 "platforms": sorted(set((r["platforms"] or "").split(",")) - {""}), "last_report": r["last_report"],
+                 "in_registry": bool(r["in_registry"])} for r in db.reported_requisites(limit)]
+        return ok(rows, total=db.report_count())
 
     @app.get("/api/v1/blacklist/domains")
     def blacklist(actor: str = Depends(extension)):

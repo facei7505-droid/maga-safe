@@ -115,6 +115,24 @@ CREATE TABLE IF NOT EXISTS scout_edges (
     PRIMARY KEY (src, dst, via, detail)
 );
 CREATE INDEX IF NOT EXISTS idx_scout_edges_dst ON scout_edges(dst);
+CREATE TABLE IF NOT EXISTS user_reports (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    reporter TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    text_hash TEXT NOT NULL,
+    cues TEXT NOT NULL DEFAULT '',
+    domains TEXT NOT NULL DEFAULT '',
+    UNIQUE (reporter, text_hash)
+);
+CREATE TABLE IF NOT EXISTS report_requisites (
+    report_id INTEGER NOT NULL REFERENCES user_reports(id),
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    display TEXT NOT NULL,
+    PRIMARY KEY (report_id, key)
+);
+CREATE INDEX IF NOT EXISTS idx_report_req_key ON report_requisites(key);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -364,6 +382,44 @@ class Database:
             "SELECT l.domain, COUNT(DISTINCT p.id) AS posts, COUNT(DISTINCT p.channel) AS channels, MAX(p.score) AS max_score FROM links l "
             "JOIN posts p ON p.id=l.post_id WHERE p.level='high' GROUP BY l.domain ORDER BY posts DESC, l.domain LIMIT ?",
             (limit,))
+
+    # ---------- жалобы из расширения ----------
+    def add_report(self, *, reporter: str, platform: str, text_hash: str, cues: Sequence[str], domains: Sequence[str],
+                   requisites: Sequence[tuple[str, str, str]]) -> bool:
+        """Жалоба пользователя. Повторная жалоба того же человека на тот же пост не считается."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO user_reports (ts, reporter, platform, text_hash, cues, domains) VALUES (?,?,?,?,?,?)",
+                (utcnow(), reporter, platform, text_hash, ",".join(cues), ",".join(domains)))
+            if not cur.rowcount:
+                return False
+            self._conn.executemany("INSERT OR IGNORE INTO report_requisites (report_id, kind, key, display) VALUES (?,?,?,?)",
+                                   [(cur.lastrowid, kind, key, display) for kind, key, display in requisites])
+            self._conn.commit()
+        return True
+
+    def report_reporters(self, keys: Iterable[str]) -> dict[str, int]:
+        """Сколько разных людей жаловались на каждый реквизит."""
+        keys = list(dict.fromkeys(keys))
+        if not keys:
+            return {}
+        rows = self._all(
+            f"SELECT rr.key, COUNT(DISTINCT r.reporter) AS n FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id "
+            f"WHERE rr.key IN ({','.join('?' * len(keys))}) GROUP BY rr.key", keys)
+        return {r["key"]: r["n"] for r in rows}
+
+    def reported_requisites(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Реквизиты из жалоб для аналитика: сколько людей, с каких площадок, есть ли уже в реестре."""
+        return self._all(
+            "SELECT rr.kind, rr.key, rr.display, COUNT(DISTINCT r.reporter) AS reporters, COUNT(DISTINCT r.id) AS reports, "
+            "GROUP_CONCAT(DISTINCT r.platform) AS platforms, MAX(r.ts) AS last_report, "
+            "EXISTS (SELECT 1 FROM requisites q WHERE q.key=rr.key) AS in_registry "
+            "FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id GROUP BY rr.key "
+            "ORDER BY reporters DESC, last_report DESC LIMIT ?", (limit,))
+
+    def report_count(self) -> int:
+        row = self._one("SELECT COUNT(*) AS n FROM user_reports")
+        return int(row["n"]) if row else 0
 
     # ---------- разведчик ----------
     def risky_channels(self, limit: int = 20) -> list[str]:

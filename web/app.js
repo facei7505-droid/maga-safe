@@ -411,7 +411,25 @@ async function loadBank() {
     state.bank = data;
     renderBank();
   } catch (err) {
-    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "err" }, err.message + " (нужен токен банка или режим разработки)")));
+    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "err" }, err.message + " (нужен токен аналитика или банка)")));
+  }
+  loadReports();
+}
+
+const PLATFORM_NAME = { telegram: "Telegram", whatsapp: "WhatsApp", instagram: "Instagram", other: "другое" };
+
+async function loadReports() {
+  const tbody = $("#report-rows");
+  try {
+    const { data, meta } = await api("/api/v1/reports?limit=100");
+    $("#reports-total").textContent = `всего жалоб: ${meta.total}`;
+    tbody.replaceChildren(...(data.length ? data.map((r) => el("tr", {},
+      el("td", {}, el("span", { class: "req-type" }, REQ_TYPE[r.type] || r.type)), el("td", { class: "mono" }, r.value),
+      el("td", {}, el("b", {}, r.reporters)), el("td", {}, r.reports), el("td", {}, r.platforms.map((p) => PLATFORM_NAME[p] || p).join(", ")),
+      el("td", {}, r.in_registry ? "да" : el("span", { class: "muted" }, "новый")), el("td", {}, day(r.last_report))))
+      : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Жалоб пока нет"))]));
+  } catch (err) {
+    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "err" }, err.message)));
   }
 }
 

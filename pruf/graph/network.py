@@ -8,12 +8,17 @@
 Ключевой реквизит — узел, после блокировки которого больше всего каналов сети остаются без
 единого способа принять деньги. При равенстве выше тот, что сильнее связывает сеть
 (betweenness). Это подсказка для банка и регулятора, а не вердикт: решает аналитик.
+
+Ротация: схемы меняют номер после блокировки. Реквизит, который впервые появился в сети через
+ROTATION_MIN_DAYS после её начала, считается свежим: его тоже нужно заблокировать, иначе сеть
+продолжит принимать деньги на новый номер.
 """
 
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Iterable
 
 import networkx as nx
@@ -27,6 +32,8 @@ TOP_KEYS = 3
 LOUVAIN_MIN_NODES = 40
 LOUVAIN_SEED = 7  # одинаковое разбиение при каждой пересборке
 EXACT_BETWEENNESS_MAX = 300  # выше считаем betweenness по выборке узлов: точный расчёт O(V·E)
+ROTATION_MIN_DAYS = 2  # реквизит моложе сети на столько дней — смена номера, а не исходный набор
+MAX_FRESH = 5
 
 
 @dataclass(frozen=True)
@@ -64,9 +71,12 @@ def money_graph(g: nx.Graph, post_ids: Iterable[int] | None = None) -> nx.Graph:
         info["score"] = max(info["score"], float(data.get("score") or 0))
         if data.get("track"):
             info["tracks"][data["track"]] += 1
+        posted = data.get("posted_at") or None
         for nb in money:
             nd = g.nodes[nb]
-            h.add_node(nb, type=nd["type"], label=nd.get("label", nb[nb.index(":") + 1:]), kind=nd.get("kind", "domain"))
+            first = h.nodes[nb].get("first_seen") if nb in h else None
+            h.add_node(nb, type=nd["type"], label=nd.get("label", nb[nb.index(":") + 1:]), kind=nd.get("kind", "domain"),
+                       first_seen=min(filter(None, (first, posted)), default=None))
             weight = h.edges[chan, nb]["weight"] + 1 if h.has_edge(chan, nb) else 1
             h.add_edge(chan, nb, weight=weight)
     return h
@@ -110,6 +120,27 @@ def key_nodes(h: nx.Graph, limit: int = TOP_KEYS) -> list[KeyNode]:
             for m, users, cut in ranked[:limit]]
 
 
+def _day(stamp: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(stamp[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def fresh_requisites(h: nx.Graph) -> tuple[str | None, list[dict[str, Any]]]:
+    """Начало сети и реквизиты, появившиеся в ней позже (ротация), свежие первыми."""
+    dated = [(n, _day(h.nodes[n].get("first_seen"))) for n in h if _blockable(h, n)]
+    dated = [(n, d) for n, d in dated if d is not None]
+    if not dated:
+        return None, []
+    start = min(d for _, d in dated)
+    fresh = sorted(((n, d) for n, d in dated if d - start >= timedelta(days=ROTATION_MIN_DAYS)), key=lambda x: (-x[1].toordinal(), x[0]))
+    return start.date().isoformat(), [
+        {"node": n, "label": h.nodes[n]["label"], "kind": h.nodes[n]["kind"], "first_seen": d.date().isoformat(),
+         "channels": sorted(h.nodes[c]["label"] for c in h.neighbors(n))}
+        for n, d in fresh[:MAX_FRESH]]
+
+
 def describe(h: nx.Graph, key: str | None = None) -> dict[str, Any]:
     """Сеть для API: каналы, реквизиты, рёбра (для «что если заблокировать» в браузере) и ключевые узлы."""
     chans = _channels(h)
@@ -117,6 +148,7 @@ def describe(h: nx.Graph, key: str | None = None) -> dict[str, Any]:
     for c in chans:
         tracks.update(h.nodes[c]["tracks"])
     money = [n for n, d in h.nodes(data=True) if d["type"] in MONEY_TYPES]
+    since, fresh = fresh_requisites(h)
     return {
         "key": key,
         "channels": sorted(h.nodes[c]["label"] for c in chans),
@@ -129,6 +161,8 @@ def describe(h: nx.Graph, key: str | None = None) -> dict[str, Any]:
         "tracks": [t for t, _ in tracks.most_common()],
         "parts": channel_parts(h),
         "key_nodes": [k.to_dict() for k in key_nodes(h)],
+        "since": since,
+        "fresh": fresh,
     }
 
 
