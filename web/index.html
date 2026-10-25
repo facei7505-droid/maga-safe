@@ -32,6 +32,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 10h19M6.5 15h4"/></svg>
         <span>Реквизиты</span>
       </button>
+      <button class="tab" data-view="scout">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="8" r="2.5"/><circle cx="9" cy="18" r="2.5"/><path d="M8.2 7.2 15.7 7.6M7 8.4l1.4 7.2M16.4 10l-5.6 6.2"/></svg>
+        <span>Разведка</span>
+      </button>
     </nav>
     <div class="side-foot auth">
       <label class="side-label" for="token">Доступ</label>
@@ -122,6 +126,14 @@
             <table class="table"><thead><tr><th>Тип</th><th>Значение</th><th>Балл</th><th>Постов</th><th>Треки</th><th>Кейсы</th><th>Последний раз</th></tr></thead><tbody id="bank-rows"></tbody></table>
           </div>
         </div>
+      </section>
+
+      <section id="view-scout" class="view hidden">
+        <div class="page-head">
+          <h1>Разведка</h1>
+          <p>Каналы, которые агент-разведчик нашёл сам по ссылкам, репостам, упоминаниям и общим реквизитам. Он только читает публичные каналы и никому не пишет.</p>
+        </div>
+        <div id="scout"></div>
       </section>
     </main>
   </div>

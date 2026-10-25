@@ -75,7 +75,7 @@ main { max-width: 1320px; margin: 0 auto; padding: 28px 32px 56px; }
 .stats b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
 body:has(#view-overview:not(.hidden)) .stats { display: none; }
 .view { display: flex; gap: var(--gap); align-items: flex-start; }
-#view-check, #view-bank, #view-overview { display: block; }
+#view-check, #view-bank, #view-overview, #view-scout { display: block; }
 #view-queue { flex-wrap: wrap; }
 #view-queue > .page-head { flex-basis: 100%; }
 .page-head { margin: 0 0 24px; }
@@ -330,3 +330,9 @@ img.broken { visibility: hidden; }
   .fact { border-bottom: 1px solid var(--line); }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Разведка */
+.scout-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: var(--gap); }
+.scout-shared { margin: 0; padding-left: 18px; line-height: 1.9; overflow-wrap: anywhere; }
+#scout .panel { margin-bottom: var(--gap); }
+@media (max-width: 860px) { .scout-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

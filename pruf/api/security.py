@@ -102,6 +102,16 @@ def require_bank(request: Request, settings: Settings, limiter: RateLimiter) -> 
     return "bank:" + _authorize(request, limiter, _named_tokens(settings.bank_tokens, "bank"), "bank")
 
 
+def require_extension(request: Request, settings: Settings, limiter: RateLimiter) -> str:
+    """Токен расширения ПРУФ Sentinel: только проверка реквизитов и чёрный список доменов."""
+    if settings.dev_mode and not settings.extension_tokens:
+        limiter.check(f"dev:{_client(request)}")
+        return "extension:dev"
+    if not settings.extension_tokens:
+        raise HTTPException(status_code=503, detail="Сервер не настроен: задайте PRUF_EXTENSION_TOKENS")
+    return "extension:" + _authorize(request, limiter, _named_tokens(settings.extension_tokens, "ext"), "extension")
+
+
 def sniff_upload(data: bytes, filename: str | None, content_type: str | None) -> tuple[str, str]:
     """Определить тип файла по сигнатуре, а не по имени. Возвращает (kind, ext)."""
     for ext, magics in IMAGE_MAGIC.items():

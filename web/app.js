@@ -5,6 +5,7 @@ import {
   $, LEVEL, REQ_TYPE, SOURCE, STATUS, TRACK, api, badge, chips, day, el, lazyImg, releaseImages, showError, toast, token, when,
 } from "./lib.js";
 import { loadOverview } from "./overview.js";
+import { loadScout } from "./scout.js";
 
 const POSTS_PAGE = 12;
 const state = { cases: [], current: null, view: "overview" };
@@ -440,6 +441,7 @@ function switchView(name) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-" + name));
   if (name === "bank") loadBank();
+  if (name === "scout") loadScout();
   if (name === "overview") loadOverview(openCase);
   if (name !== "queue") history.replaceState(null, "", "#" + name);
 }
@@ -474,7 +476,7 @@ function init() {
   loadCases();
   const hash = decodeURIComponent(location.hash.slice(1));
   if (hash.startsWith("case/")) openCase(hash.slice(5));
-  else switchView(["queue", "check", "bank"].includes(hash) ? hash : "overview");
+  else switchView(["queue", "check", "bank", "scout"].includes(hash) ? hash : "overview");
 }
 
 init();

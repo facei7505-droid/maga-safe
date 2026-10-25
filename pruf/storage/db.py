@@ -88,6 +88,33 @@ CREATE TABLE IF NOT EXISTS case_status (
     updated_at TEXT NOT NULL,
     updated_by TEXT
 );
+CREATE TABLE IF NOT EXISTS scout_channels (
+    username TEXT PRIMARY KEY,
+    title TEXT,
+    subscribers INTEGER,
+    created_at TEXT,
+    risk REAL,
+    level TEXT,
+    track TEXT,
+    posts_checked INTEGER DEFAULT 0,
+    risky_posts INTEGER DEFAULT 0,
+    status TEXT NOT NULL,
+    found_via TEXT,
+    found_from TEXT,
+    found_detail TEXT,
+    depth INTEGER,
+    first_seen TEXT NOT NULL,
+    last_checked TEXT
+);
+CREATE TABLE IF NOT EXISTS scout_edges (
+    src TEXT NOT NULL,
+    dst TEXT NOT NULL,
+    via TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    first_seen TEXT NOT NULL,
+    PRIMARY KEY (src, dst, via, detail)
+);
+CREATE INDEX IF NOT EXISTS idx_scout_edges_dst ON scout_edges(dst);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -324,3 +351,47 @@ class Database:
 
     def audit(self, actor: str, action: str, target: str | None) -> None:
         self._exec("INSERT INTO audit_log (ts, actor, action, target) VALUES (?,?,?,?)", (utcnow(), actor, action, target))
+
+    # ---------- расширение ----------
+    def risky_texts(self, limit: int = 50_000) -> list[str]:
+        return [r["text"] for r in self._all(
+            "SELECT text FROM posts WHERE level='high' AND text IS NOT NULL ORDER BY id DESC LIMIT ?", (limit,))]
+
+    def risky_domains(self, limit: int = 5000) -> list[dict[str, Any]]:
+        """Домены из постов высокого риска (ссылки на бренды и мессенджеры сюда не пишутся при приёме)."""
+        return self._all(
+            "SELECT l.domain, COUNT(DISTINCT p.id) AS posts, MAX(p.score) AS max_score FROM links l "
+            "JOIN posts p ON p.id=l.post_id WHERE p.level='high' GROUP BY l.domain ORDER BY posts DESC, l.domain LIMIT ?",
+            (limit,))
+
+    # ---------- разведчик ----------
+    def risky_channels(self, limit: int = 20) -> list[str]:
+        """Каналы постов высокого риска: семена для разведчика (самые рискованные первыми)."""
+        return [r["channel"] for r in self._all(
+            "SELECT channel, MAX(score) AS s FROM posts WHERE level='high' AND channel IS NOT NULL "
+            "GROUP BY channel ORDER BY s DESC, COUNT(*) DESC LIMIT ?", (limit,))]
+
+    def scout_channel(self, username: str) -> dict[str, Any] | None:
+        return self._one("SELECT * FROM scout_channels WHERE username=?", (username,))
+
+    def scout_channels(self) -> list[dict[str, Any]]:
+        return self._all("SELECT * FROM scout_channels ORDER BY risk DESC, username")
+
+    def scout_save_channel(self, row: dict[str, Any]) -> None:
+        """Записать результат проверки канала; first_seen сохраняется с первого раза."""
+        cols = ("username", "title", "subscribers", "created_at", "risk", "level", "track", "posts_checked",
+                "risky_posts", "status", "found_via", "found_from", "found_detail", "depth", "last_checked")
+        values = [row.get(c) for c in cols]
+        updates = ", ".join(f"{c}=excluded.{c}" for c in cols[1:] if not c.startswith("found_") and c != "depth")
+        self._exec(
+            f"INSERT INTO scout_channels ({', '.join(cols)}, first_seen) VALUES ({', '.join('?' * len(cols))}, ?) "
+            f"ON CONFLICT(username) DO UPDATE SET {updates}",
+            (*values, utcnow()),
+        )
+
+    def scout_add_edge(self, src: str, dst: str, via: str, detail: str = "") -> None:
+        self._exec("INSERT OR IGNORE INTO scout_edges (src, dst, via, detail, first_seen) VALUES (?,?,?,?,?)",
+                   (src, dst, via, detail, utcnow()))
+
+    def scout_edges(self) -> list[dict[str, Any]]:
+        return self._all("SELECT src, dst, via, detail, first_seen FROM scout_edges ORDER BY first_seen, src, dst")

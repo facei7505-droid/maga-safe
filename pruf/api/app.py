@@ -30,14 +30,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from pruf.analytics import overview
-from pruf.api.security import RateLimiter, require_analyst, require_bank, sniff_upload
+from pruf.api.security import RateLimiter, require_analyst, require_bank, require_extension, sniff_upload
 from pruf.bot.telegram import BotLogic, HttpTelegramApi
 from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
 from pruf.graph.builder import CaseGraph, artifact_timeline
+from pruf.inspect import Inspector
 from pruf.normalize.audio import transcribe, whisper_available
 from pruf.normalize.ocr import ocr_available
 from pruf.normalize.requisites import extract_requisites
@@ -79,6 +80,28 @@ def capabilities(p: Pruf) -> dict[str, Any]:
             "llm": p.detector.llm_state(), "link_resolution": p.settings.resolve_links}
 
 
+class InspectIn(BaseModel):
+    """Только извлечённое из поста: реквизиты, ссылки, хэш текста, номера признаков. Без текста."""
+    requisites: list[str] = Field(default_factory=list, max_length=10)
+    links: list[str] = Field(default_factory=list, max_length=20)
+    text_hash: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
+    cues: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("requisites", "cues")
+    @classmethod
+    def _short(cls, items: list[str]) -> list[str]:
+        if any(len(i) > 64 for i in items):
+            raise ValueError("слишком длинное значение")
+        return items
+
+    @field_validator("links")
+    @classmethod
+    def _url(cls, items: list[str]) -> list[str]:
+        if any(len(i) > 2048 for i in items):
+            raise ValueError("слишком длинная ссылка")
+        return items
+
+
 class CaseUpdate(BaseModel):
     status: str
     note: str | None = Field(default=None, max_length=2000)
@@ -97,6 +120,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             raise RuntimeError("ПРУФ MVP работает в одном процессе: уберите --workers / WEB_CONCURRENCY")
         state["pruf"] = pruf or Pruf(settings)
         state["graph"] = CaseGraph(state["pruf"].db)
+        state["inspector"] = Inspector(state["pruf"].db, state["pruf"].settings.effective_hmac_key())
         if settings.telegram_token:
             if len(settings.telegram_secret) < MIN_WEBHOOK_SECRET or not settings.telegram_secret.replace("-", "").replace("_", "").isalnum():
                 log.warning("вебхук бота выключен: задайте PRUF_TELEGRAM_SECRET из %d+ символов [A-Za-z0-9_-]", MIN_WEBHOOK_SECRET)
@@ -143,6 +167,14 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
 
     def bank(request: Request) -> str:
         return require_bank(request, settings, limiter)
+
+    def extension(request: Request) -> str:
+        return require_extension(request, settings, limiter)
+
+    def inspector() -> Inspector:
+        ins: Inspector = state["inspector"]
+        ins.refresh(state["pruf"].version)
+        return ins
 
     def core() -> Pruf:
         return state["pruf"]
@@ -382,6 +414,24 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
                    "max_score": found["max_score"], "tracks": sorted(set((found["tracks"] or "").split(",")) - {""}),
                    "first_seen": found["first_seen"],
                    "note": "Найдены признаки использования реквизита в схемах; требуется проверка банком"})
+
+    # ---------- расширение ПРУФ Sentinel ----------
+    @app.post("/api/v1/inspect")
+    def inspect_post(body: InspectIn, actor: str = Depends(extension)):
+        """Риск поста по извлечённым признакам; текст поста сюда не приходит и ничего не сохраняется."""
+        return ok(inspector().inspect(body.requisites, body.links, body.text_hash, body.cues))
+
+    @app.get("/api/v1/blacklist/domains")
+    def blacklist(actor: str = Depends(extension)):
+        domains = inspector().blacklist()
+        return ok(domains, total=len(domains), version=core().version)
+
+    # ---------- разведчик ----------
+    @app.get("/api/v1/scout")
+    def scout_view(actor: str = Depends(analyst)):
+        """Каналы и связи, найденные разведчиком (python -m pruf.scout)."""
+        db = core().db
+        return ok({"channels": db.scout_channels(), "edges": db.scout_edges()})
 
     # ---------- Telegram webhook ----------
     @app.post("/api/v1/telegram/webhook")

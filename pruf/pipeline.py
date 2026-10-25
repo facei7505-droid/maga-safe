@@ -148,7 +148,7 @@ class Pruf:
         return out
 
     # ---------- приём ----------
-    def ingest(self, sub: Submission) -> dict[str, Any]:
+    def ingest(self, sub: Submission, allow_llm: bool = True) -> dict[str, Any]:
         # Сначала проверяем файлы, чтобы битая картинка не оставила пустой пост.
         images = [(up, open_image(up.data)) for up in sub.uploads if up.kind == "image"]
         # Медленное (OCR, Whisper, LLM) идёт вне общей блокировки: под ней только запись в реестр
@@ -160,7 +160,7 @@ class Pruf:
                                           posted_at=sub.posted_at, text=redact_cards(sub.text),
                                           external_id=sub.external_id, label=sub.label)
         try:
-            return self._process(post_id, sub, images, ocr, transcript, voice_failed)
+            return self._process(post_id, sub, images, ocr, transcript, voice_failed, allow_llm)
         except Exception as exc:
             self.db.mark_post_failed(post_id, type(exc).__name__)
             raise
@@ -175,7 +175,7 @@ class Pruf:
         return transcript, transcript is None
 
     def _process(self, post_id: int, sub: Submission, images: list, ocr: list, transcript: str | None,
-                 voice_failed: bool) -> dict[str, Any]:
+                 voice_failed: bool, allow_llm: bool = True) -> dict[str, Any]:
         got = _Collected()
         degraded: list[dict[str, str]] = []
         if voice_failed:
@@ -202,7 +202,7 @@ class Pruf:
                     self.db.add_link(post_id, link.url, link.domain, link.resolved)
             context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
         degraded.extend(self._ocr_degraded(got))
-        analysis = self.detector.detect(sources, context).analysis  # может звать LLM: вне блокировки
+        analysis = self.detector.detect(sources, context, allow_llm=allow_llm).analysis  # может звать LLM: вне блокировки
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))
@@ -230,7 +230,7 @@ class Pruf:
         return self.check(text)["analysis"]
 
     def check(self, text: str | None, images: tuple[bytes, ...] = (), transcript: str | None = None,
-              public: bool = False) -> dict[str, Any]:
+              public: bool = False, allow_llm: bool = True) -> dict[str, Any]:
         """Проверка без сохранения (бот, дашборд): реестр и граф только читаются, поэтому
         уже засвеченный номер или скрин, встречавшийся в рискованных постах, виден и здесь.
         public=True (анонимный пользователь бота): без каналов, сумм с чужих скринов и счётчиков."""
@@ -247,7 +247,7 @@ class Pruf:
         # уже даёт средний риск. LLM для анонимов выключен: иначе любой может тратить бюджет API.
         if not public or first.analysis.level in RISKY_LEVELS:
             context += self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
-        analysis = self.detector.detect(sources, context, allow_llm=not public).analysis
+        analysis = self.detector.detect(sources, context, allow_llm=allow_llm and not public).analysis
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))

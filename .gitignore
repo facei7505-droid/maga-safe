@@ -12,3 +12,5 @@ reports/
 .coverage
 htmlcov/
 models/*.joblib
+*.session
+*.session-journal

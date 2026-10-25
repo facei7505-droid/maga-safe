@@ -21,6 +21,7 @@ class Settings:
     model_path: Path = field(default_factory=lambda: Path(os.environ.get("PRUF_MODEL_PATH", ROOT / "models" / "clf.joblib")))
     analyst_token: str = field(default_factory=lambda: os.environ.get("PRUF_ANALYST_TOKEN", ""))
     bank_tokens: tuple[str, ...] = field(default_factory=lambda: _env_list("PRUF_BANK_TOKENS"))
+    extension_tokens: tuple[str, ...] = field(default_factory=lambda: _env_list("PRUF_EXTENSION_TOKENS"))
     dev_mode: bool = field(default_factory=lambda: os.environ.get("PRUF_DEV_MODE", "") == "1")
     hmac_key: str = field(default_factory=lambda: os.environ.get("PRUF_HMAC_KEY", ""))
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
