@@ -25,7 +25,7 @@ async function loadStats() {
     );
     const cap = data.capabilities || {};
     const off = [];
-    if (!cap.ocr) off.push("OCR");
+    if (!cap.ocr && !cap.ocr_off) off.push("OCR");  // выключенный настройкой OCR (PRUF_OCR=0) — не поломка
     if (!cap.ml) off.push("ML-модель");
     if (cap.llm && cap.llm.configured && cap.llm.failures) off.push(`LLM (ошибок: ${cap.llm.failures})`);
     const banner = $("#degraded");

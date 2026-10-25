@@ -460,7 +460,7 @@ def test_stats_report_capabilities(dev: TestClient) -> None:
     # Assert
     assert data["posts"] == 1 and data["levels"] == {"high": 1}
     assert data["cases"] == 1 and data["texts_indexed"] == 1
-    assert set(data["capabilities"]) == {"ocr", "whisper", "ml", "llm", "link_resolution"}
+    assert set(data["capabilities"]) == {"ocr", "ocr_off", "whisper", "ml", "llm", "link_resolution"}
     assert data["capabilities"]["ml"] is False and data["capabilities"]["link_resolution"] is False
 
 
@@ -481,9 +481,16 @@ def test_bank_feed_requires_bank_token(secured: TestClient) -> None:
     assert row["tracks"] == ["lottery"] and row["cases"] and "match_key" not in row
 
 
-def test_bank_feed_without_tokens_outside_dev_is_503(tmp_path: Path) -> None:
-    with _client(tmp_path, dev_mode=False, analyst_token=ANALYST, bank_tokens=()) as client:
+def test_bank_feed_without_any_tokens_outside_dev_is_503(tmp_path: Path) -> None:
+    with _client(tmp_path, dev_mode=False, analyst_token="", bank_tokens=()) as client:
         assert client.get("/api/v1/bank/requisites", headers=_auth(BANK)).status_code == 503
+
+
+def test_analyst_token_opens_bank_feed_when_bank_tokens_are_not_set(tmp_path: Path) -> None:
+    # Сайт аналитика показывает ленту реквизитов даже без выданных банкам токенов
+    with _client(tmp_path, dev_mode=False, analyst_token=ANALYST, bank_tokens=()) as client:
+        assert client.get("/api/v1/bank/requisites", headers=_auth(ANALYST)).status_code == 200
+        assert client.get("/api/v1/bank/requisites", headers=_auth(BANK)).status_code == 401
 
 
 def test_bank_feed_filters_level_and_since(dev: TestClient) -> None:

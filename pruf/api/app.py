@@ -76,7 +76,7 @@ class RequisiteCheck(BaseModel):
 
 def capabilities(p: Pruf) -> dict[str, Any]:
     """Что реально работает: аналитик видит, если OCR, Whisper, ML или LLM недоступны."""
-    return {"ocr": p.settings.ocr_enabled and ocr_available(), "whisper": whisper_available(), "ml": p.detector.has_classifier,
+    return {"ocr": p.settings.ocr_enabled and ocr_available(), "ocr_off": not p.settings.ocr_enabled, "whisper": whisper_available(), "ml": p.detector.has_classifier,
             "llm": p.detector.llm_state(), "link_resolution": p.settings.resolve_links}
 
 
