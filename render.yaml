@@ -1,0 +1,29 @@
+# Render Blueprint: New → Blueprint → этот репозиторий. Токены генерирует Render, ключ Claude вводится вручную.
+# Бесплатный план без диска: демо-данные создаются заново при каждом запуске (3–5 минут после старта).
+# PRUF_OCR=0: OCR скриншотов поднимает память до 540–660 МБ, бесплатные 512 МБ его не держат.
+# Сравнение картинок (PDQ) работает, суммы на скринах не читаются. На плане standard (2 ГБ) переменную можно убрать.
+services:
+  - type: web
+    name: pruf
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PRUF_ANALYST_TOKEN
+        generateValue: true
+      - key: PRUF_HMAC_KEY
+        generateValue: true
+      - key: PRUF_EXTENSION_TOKENS
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PRUF_LLM_MODEL
+        value: claude-sonnet-5-5
+      # Арбитр Claude включается сам, когда ANTHROPIC_API_KEY задан. 50 вызовов в сутки берегут баланс.
+      - key: PRUF_LLM_DAILY_BUDGET
+        value: "50"
+      - key: PRUF_RATE_LIMIT
+        value: "120"
+      - key: PRUF_OCR
+        value: "0"

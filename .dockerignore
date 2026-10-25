@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+.claude
+data
+models
+reports
+docs
+tests
+__pycache__
+*.pyc
+.coverage
+htmlcov

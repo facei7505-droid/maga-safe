@@ -5,4 +5,12 @@ __pycache__/
 node_modules/
 *.sqlite
 *.db
-data/raw/
+*.db-wal
+*.db-shm
+data/
+reports/
+.coverage
+htmlcov/
+models/*.joblib
+*.session
+*.session-journal
