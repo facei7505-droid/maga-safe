@@ -2,6 +2,8 @@
 
 Видео: [`pruf-features.mp4`](pruf-features.mp4), 1920×1080, 1 минута 47 секунд, без звука. Время шагов в [`pruf-features.timeline.json`](pruf-features.timeline.json). Пересобрать видео: `python scripts/record_features.py` (см. docstring).
 
+**Готовые версии с озвучкой:** [`pruf-features-voice.mp4`](pruf-features-voice.mp4) (1:14, видео подогнано под запись [`voiceover-features.mp3`](voiceover-features.mp3)) и полное демо [`pruf-demo-full.mp4`](pruf-demo-full.mp4) (4:18, новые функции вставлены на 2:58, перед финальной фразой).
+
 Ролик можно вставить в основное демо после «Реквизитов» (около 2:53), перед финалом. Читайте спокойно, 120–130 слов в минуту. Если не успеваете, выкиньте фразы в скобках.
 
 | Время | На экране | Текст |
