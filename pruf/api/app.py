@@ -491,7 +491,8 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         db = core().db
         rows = [{"type": r["kind"], "value": r["display"], "reporters": r["reporters"], "reports": r["reports"],
                  "platforms": sorted(set((r["platforms"] or "").split(",")) - {""}), "last_report": r["last_report"],
-                 "in_registry": bool(r["in_registry"])} for r in db.reported_requisites(limit)]
+                 "in_registry": bool(r["in_registry"]), "trusted_reporters": r["trusted_reporters"],
+                 "trust": round(r["trust"], 2)} for r in db.reported_requisites(limit)]
         return ok(rows, total=db.report_count())
 
     @app.get("/api/v1/blacklist/domains")

@@ -429,11 +429,12 @@ async function loadReports() {
     $("#reports-total").textContent = `всего жалоб: ${meta.total}`;
     tbody.replaceChildren(...(data.length ? data.map((r) => el("tr", {},
       el("td", {}, el("span", { class: "req-type" }, REQ_TYPE[r.type] || r.type)), el("td", { class: "mono" }, r.value),
-      el("td", {}, el("b", {}, r.reporters)), el("td", {}, r.reports), el("td", {}, r.platforms.map((p) => PLATFORM_NAME[p] || p).join(", ")),
+      el("td", {}, el("b", {}, r.reporters)), el("td", {}, r.trusted_reporters ? el("b", { class: "trusted" }, r.trusted_reporters) : el("span", { class: "muted" }, "0")),
+      el("td", {}, r.trust.toFixed(2).replace(".", ",")), el("td", {}, r.reports), el("td", {}, r.platforms.map((p) => PLATFORM_NAME[p] || p).join(", ")),
       el("td", {}, r.in_registry ? "да" : el("span", { class: "muted" }, "новый")), el("td", {}, day(r.last_report))))
-      : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Жалоб пока нет"))]));
+      : [el("tr", {}, el("td", { colspan: 9, class: "muted" }, "Жалоб пока нет"))]));
   } catch (err) {
-    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "err" }, err.message)));
+    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 9, class: "err" }, err.message)));
   }
 }
 

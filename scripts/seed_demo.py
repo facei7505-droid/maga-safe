@@ -158,6 +158,20 @@ HONEST_GIVEAWAY = ("@dala_textile_kz", "🎁 РОЗЫГРЫШ от магази�
                    "Вопросы: +7 702 640 18 33")
 
 
+def seed_trusted_history(pruf: Pruf) -> int:
+    """Двое жалобщиков раньше уже жаловались на номера, которые аналитик подтвердил: у них есть история,
+    и их жалобы поднимают номер в очереди. Номера берём из чёрного списка демо-заливки."""
+    inspector = Inspector(pruf.db, pruf.settings.effective_hmac_key())
+    black = [r["display"] for r in pruf.db.requisite_feed(None, "medium", 50, 0, "black") if r["kind"] in ("phone", "kaspi_link")]
+    n = 0
+    for value in black:
+        for i in (0, 1):
+            reporter = hashlib.sha256(f"demo-reporter-{i}".encode()).hexdigest()[:24]
+            digest = hashlib.sha256(f"history|{value}|{i}".encode()).hexdigest()
+            n += inspector.report(reporter, "telegram", [value], [], digest, ["kaspi_transfer"])
+    return n
+
+
 def seed_decisions(pruf: Pruf) -> dict[str, int]:
     """Решения аналитика для демо: кейс оператора подтверждён, честный розыгрыш отклонён."""
     channel, text = HONEST_GIVEAWAY
@@ -210,6 +224,7 @@ def main() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
     _log(f"жалобы из расширения: {seed_reports(pruf)}")
     _log(f"списки: {seed_decisions(pruf)} (confirmed → чёрный, dismissed → снят)")
+    _log(f"история проверенных жалобщиков: {seed_trusted_history(pruf)} жалоб")
     hero = pruf.db.find_post_by_external_id("hero00")
     if hero:
         arts = pruf.db.artifacts_for_post(hero["id"])

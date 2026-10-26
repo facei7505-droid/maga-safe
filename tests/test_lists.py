@@ -220,3 +220,50 @@ def test_csv_export_requires_bank_token(tmp_path: Path) -> None:
         assert client.get("/api/v1/bank/requisites.csv", headers={"Authorization": f"Bearer {EXT}"}).status_code == 401
         assert client.get("/api/v1/bank/requisites.csv", headers={"Authorization": f"Bearer {ANALYST}"}).status_code == 401
         assert client.get("/api/v1/bank/requisites.csv", headers={"Authorization": f"Bearer {BANK}"}).status_code == 200
+
+
+# ---------- доверие к жалобщику ----------
+def _report(db: Database, reporter: str, phone: str, n: int = 0) -> None:
+    db.add_report(reporter=reporter, platform="telegram", text_hash=f"{reporter}-{phone}-{n}", cues=["kaspi_transfer"],
+                  domains=[], requisites=[("phone", "phone:" + phone, phone)])
+
+
+def test_reports_from_proven_reporters_rank_above_many_new_ones(tmp_path: Path) -> None:
+    # Arrange: двое жалобщиков раньше жаловались на два номера, которые стали чёрными
+    db = Database(tmp_path / "x.db")
+    for old in ("+77000000001", "+77000000002"):
+        db.set_case_decision("C-" + old[-1], ["phone:" + old], "confirmed", "a")
+        for who in ("proven-a", "proven-b"):
+            _report(db, who, old)
+    for who in ("proven-a", "proven-b"):
+        _report(db, who, "+77011111111")
+    for i in range(10):
+        _report(db, f"new-{i}", "+77022222222")
+
+    # Act
+    rows = {r["display"]: r for r in db.reported_requisites()}
+    order = [r["display"] for r in db.reported_requisites() if r["display"] in ("+77011111111", "+77022222222")]
+
+    # Assert
+    assert order == ["+77011111111", "+77022222222"]
+    assert rows["+77011111111"]["trusted_reporters"] == 2 and rows["+77011111111"]["trust"] == pytest.approx(0.75)
+    assert rows["+77022222222"]["trusted_reporters"] == 0 and rows["+77022222222"]["trust"] == pytest.approx(0.5)
+
+
+def test_dismissed_numbers_lower_reporter_trust(tmp_path: Path) -> None:
+    db = Database(tmp_path / "x.db")
+    db.set_case_decision("C-1", ["phone:+77000000001"], "dismissed", "a")
+    _report(db, "slanderer", "+77000000001")
+    _report(db, "slanderer", "+77033333333")
+    row = next(r for r in db.reported_requisites() if r["display"] == "+77033333333")
+    assert row["trust"] == pytest.approx(1 / 3) and row["trusted_reporters"] == 0
+
+
+def test_reports_api_exposes_trust_and_public_verdict_ignores_reports(dev: TestClient) -> None:
+    before = _inspect(dev)
+    for i in range(5):
+        dev.post("/api/v1/reports", json={"requisites": [KASPI_PHONE], "text_hash": f"{i:064x}", "install_id": f"install-{i}",
+                                          "cues": ["kaspi_transfer"]})
+    row = dev.get("/api/v1/reports").json()["data"][0]
+    assert row["trusted_reporters"] == 0 and row["trust"] == 0.5 and row["reporters"] == 5
+    assert _inspect(dev)["score"] == before["score"]

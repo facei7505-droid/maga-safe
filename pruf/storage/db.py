@@ -446,14 +446,27 @@ class Database:
                                    [(cur.lastrowid, kind, key, display) for kind, key, display in requisites])
         return True
 
-    def reported_requisites(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Реквизиты из жалоб для аналитика: сколько людей, с каких площадок, есть ли уже в реестре."""
+    def reported_requisites(self, limit: int = 200, trusted_min: float = 0.7) -> list[dict[str, Any]]:
+        """Реквизиты из жалоб для аналитика: сколько людей, с каких площадок, есть ли уже в реестре и сколько
+        жалоб от проверенных людей. Надёжность жалобщика (c+1)/(c+d+2): c — его номера, ставшие чёрными,
+        d — снятые. Проверенный: надёжность ≥ trusted_min и хотя бы один подтверждённый номер. Анонимный id
+        жалобщика меняется раз в месяц, поэтому и история доверия живёт месяц: это плата за приватность."""
         return self._all(
+            "WITH st AS (SELECT key, MAX(decision='confirmed') AS black, MAX(decision='dismissed') AS cleared "
+            "FROM requisite_status GROUP BY key), "
+            "hist AS (SELECT r.reporter, COUNT(DISTINCT CASE WHEN st.black THEN rr.key END) AS c, "
+            "COUNT(DISTINCT CASE WHEN st.cleared AND NOT st.black THEN rr.key END) AS d "
+            "FROM user_reports r JOIN report_requisites rr ON rr.report_id=r.id LEFT JOIN st ON st.key=rr.key GROUP BY r.reporter), "
+            "trust AS (SELECT reporter, c, (c + 1.0) / (c + d + 2.0) AS t FROM hist), "
+            "pairs AS (SELECT DISTINCT rr.key, r.reporter FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id), "
+            "per_key AS (SELECT p.key, AVG(t.t) AS trust, SUM(t.t >= ? AND t.c >= 1) AS trusted_reporters "
+            "FROM pairs p JOIN trust t ON t.reporter=p.reporter GROUP BY p.key) "
             "SELECT rr.kind, rr.key, rr.display, COUNT(DISTINCT r.reporter) AS reporters, COUNT(DISTINCT r.id) AS reports, "
             "GROUP_CONCAT(DISTINCT r.platform) AS platforms, MAX(r.ts) AS last_report, "
-            "EXISTS (SELECT 1 FROM requisites q WHERE q.key=rr.key) AS in_registry "
-            "FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id GROUP BY rr.key "
-            "ORDER BY reporters DESC, last_report DESC LIMIT ?", (limit,))
+            "EXISTS (SELECT 1 FROM requisites q WHERE q.key=rr.key) AS in_registry, "
+            "MAX(k.trusted_reporters) AS trusted_reporters, MAX(k.trust) AS trust "
+            "FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id JOIN per_key k ON k.key=rr.key GROUP BY rr.key "
+            "ORDER BY trusted_reporters DESC, reporters DESC, last_report DESC LIMIT ?", (trusted_min, limit))
 
     def report_count(self) -> int:
         row = self._one("SELECT COUNT(*) AS n FROM user_reports")

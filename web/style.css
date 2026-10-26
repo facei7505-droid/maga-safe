@@ -302,6 +302,7 @@ img.broken { visibility: hidden; }
 .list-badge.grey { color: var(--muted); background: var(--panel-2); }
 .list-badge.grey.overdue { color: var(--accent); border-color: var(--accent); }
 .list-badge.black { color: #fff; background: var(--high); border-color: var(--high); }
+.trusted { color: var(--accent); }
 .list-badge.cleared { color: var(--muted); text-decoration: line-through; }
 
 /* ---------- тултип и уведомления ---------- */
