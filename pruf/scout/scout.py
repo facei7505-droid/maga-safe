@@ -123,6 +123,12 @@ class Scout:
         self.results: dict[str, ChannelResult] = {}
         self.edges: set[tuple[str, str, str, str]] = set()
         self.stopped: str | None = None
+        # Журнал: каждое решение агента по порядку — что поставил в очередь и почему, что проверил, куда пошёл
+        self.steps: list[dict[str, Any]] = []
+        self._started = utcnow()
+
+    def _step(self, kind: str, channel: str | None = None, **fields: Any) -> None:
+        self.steps.append({"kind": kind, "channel": channel, **fields})
 
     # ---------- очередь ----------
     def enqueue(self, cand: Candidate, parent_risk: float = 0.0) -> None:
@@ -132,13 +138,20 @@ class Scout:
         prev = self.pruf.db.scout_channel(name)
         if name in self._queued or (cand.via != "seed" and self._recently_checked(prev)):
             self._link(cand)  # канал уже известен: только связь в графе
+            if name not in self._queued:
+                self._step("skip", name, via=cand.via, parent=cand.parent, detail=cand.detail, depth=cand.depth,
+                           note="проверен недавно, повторно не идём")
             return
         if cand.depth > self.config.max_depth:
+            self._step("skip", name, via=cand.via, parent=cand.parent, detail=cand.detail, depth=cand.depth,
+                       note=f"глубже {self.config.max_depth} шагов от семени")
             return
         info = None
         if cand.via != "seed":
             info = self.source.channel_info(name)  # SourceUnavailable останавливает запуск в run()
             if info is None:
+                self._step("skip", name, via=cand.via, parent=cand.parent, detail=cand.detail, depth=cand.depth,
+                           note="публичного канала нет")
                 return  # нет такого публичного канала
             self._info[name] = info
         self._link(cand)
@@ -146,6 +159,8 @@ class Scout:
         priority = (VIA_PRIORITY[cand.via] + PARENT_RISK_SHARE * parent_risk + freshness_bonus(info, prev, self.now)
                     - DEPTH_PENALTY * cand.depth)
         heapq.heappush(self._heap, (-priority, next(self._seq), cand))
+        self._step("queue", name, via=cand.via, parent=cand.parent, detail=cand.detail, depth=cand.depth,
+                   priority=round(priority, 1))
 
     def _link(self, cand: Candidate) -> None:
         if cand.parent:
@@ -182,7 +197,14 @@ class Scout:
             self.stopped = str(exc)
         except SourceUnavailable as exc:
             self.stopped = f"источник недоступен: {exc}"
-        return self.report()
+        self._step("stop", note=self.stopped or "очередь пуста: всё, что нашли, проверено")
+        report = self.report()
+        if self.config.store:
+            self.pruf.db.scout_save_run({"started_at": self._started, "finished_at": report["finished_at"],
+                                         "source": self.source.name, "seeds": seeds,
+                                         "channels_checked": report["channels_checked"],
+                                         "risky": len(report["risky_channels"]), "stopped": self.stopped}, self.steps)
+        return report
 
     def _drain(self) -> None:
         while self._heap and len(self.results) < self.config.max_channels:
@@ -201,13 +223,19 @@ class Scout:
         posts = self.source.recent_posts(cand.username, self.config.posts_per_channel)
         if not posts:
             log.info("%s: нет постов с текстом, не помечаем чистым", cand.username)
+            self._step("skip", cand.username, via=cand.via, parent=cand.parent, depth=cand.depth, note="нет постов с текстом")
             return
         result = self._score_channel(cand, posts)
         self.results[cand.username] = result
         if self.config.store:
             self._save(cand, info, result)
         log.info("%s: риск %.0f (%s), постов %d", cand.username, result.risk, result.level, result.posts_checked)
-        if result.risk >= self.config.expand_threshold:
+        expand = result.risk >= self.config.expand_threshold
+        self._step("visit", cand.username, via=cand.via, parent=cand.parent, detail=cand.detail, depth=cand.depth,
+                   risk=round(result.risk, 1), level=result.level,
+                   note=f"{result.risky_posts} из {result.posts_checked} постов с признаками схем; "
+                        + ("высокий риск — идём дальше по его ссылкам, репостам и реквизитам" if expand else "дальше не идём"))
+        if expand:
             self._expand(cand, posts, result)
 
     def _save(self, cand: Candidate, info: ChannelInfo, result: ChannelResult) -> None:
@@ -275,6 +303,8 @@ class Scout:
                 self._search_posts(cand.username, domain, "domain", depth, result.risk)
 
     def _search_posts(self, parent: str, query: str, via: str, depth: int, risk: float) -> None:
+        self._step("search", parent, via=via, detail=query, depth=depth,
+                   note="ищем этот номер в других каналах" if via == "requisite" else "ищем этот домен в других каналах")
         for found in self.source.search_posts(query, self.config.search_limit):
             if found.channel != parent:
                 self.enqueue(Candidate(found.channel, depth, parent, via, query), risk)
@@ -308,5 +338,6 @@ class Scout:
             "shared_requisites": shared,
             "edges": [{"src": s, "dst": d, "via": v, "detail": det} for s, d, v, det in sorted(self.edges)],
             "requests_used": getattr(getattr(self.source, "throttle", None), "used", None),
+            "steps": self.steps,
             "stopped": self.stopped,
         }

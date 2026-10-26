@@ -565,7 +565,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     def scout_view(actor: str = Depends(analyst)):
         """Каналы и связи, найденные разведчиком (python -m pruf.scout)."""
         db = core().db
-        return ok({"channels": db.scout_channels(), "edges": db.scout_edges()})
+        return ok({"channels": db.scout_channels(), "edges": db.scout_edges(), "last_run": db.scout_last_run()})
 
     # ---------- Telegram webhook ----------
     @app.post("/api/v1/telegram/webhook")

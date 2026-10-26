@@ -389,3 +389,44 @@ def test_cli_demo_prints_summary_and_saves_report(env: Path, capsys: pytest.Capt
     assert "Найдено связанных каналов с признаками схем: 15; общих номеров Kaspi: 4" in text
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["source"] == "fixture" and report["requests_used"] > 0
+
+
+# ---------- журнал запуска: как агент шёл по сети ----------
+def test_run_journal_records_why_and_in_what_order(pruf: Pruf) -> None:
+    # Act
+    report = _run(pruf)
+    run = pruf.db.scout_last_run()
+
+    # Assert: журнал сохранён и совпадает с отчётом
+    steps = run["steps"]
+    assert run["source"] == "fixture" and run["seeds"] == ["iphone_razdacha_kz"]
+    assert run["channels_checked"] == report["channels_checked"] and len(steps) == len(report["steps"])
+    assert (steps[0]["kind"], steps[0]["channel"], steps[0]["via"]) == ("queue", "iphone_razdacha_kz", "seed")
+    assert steps[-1]["kind"] == "stop" and steps[-1]["note"]
+    visits = [s for s in steps if s["kind"] == "visit"]
+    assert len(visits) == report["channels_checked"] and all(s["risk"] is not None and s["note"] for s in visits)
+    # каждый проверенный канал, кроме семени, сначала попал в очередь с причиной и приоритетом
+    queued = {s["channel"]: s for s in steps if s["kind"] == "queue"}
+    for v in visits[1:]:
+        q = queued[v["channel"]]
+        assert q["via"] in ("forward", "mention", "link", "requisite", "domain", "search") and q["priority"] is not None
+        assert steps.index(q) < steps.index(v)
+    # от номера Kaspi агент ищет другие каналы — это видно в журнале
+    assert any(s["kind"] == "search" and s["via"] == "requisite" for s in steps)
+
+
+def test_dry_run_keeps_the_journal_in_the_report_only(pruf: Pruf) -> None:
+    report = _run(pruf, ScoutConfig(max_channels=5, store=False, keywords=()))
+    assert report["steps"] and pruf.db.scout_last_run() is None
+
+
+def test_scout_api_returns_the_last_run(pruf: Pruf, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from pruf.api.app import create_app
+
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    _run(pruf)
+    with TestClient(create_app(pruf.settings, pruf=pruf)) as client:
+        data = client.get("/api/v1/scout").json()["data"]
+    assert data["last_run"]["source"] == "fixture" and data["last_run"]["steps"][0]["kind"] == "queue"

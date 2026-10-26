@@ -125,6 +125,31 @@ CREATE TABLE IF NOT EXISTS scout_edges (
     PRIMARY KEY (src, dst, via, detail)
 );
 CREATE INDEX IF NOT EXISTS idx_scout_edges_dst ON scout_edges(dst);
+CREATE TABLE IF NOT EXISTS scout_runs (
+    id INTEGER PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    source TEXT NOT NULL,
+    seeds TEXT NOT NULL DEFAULT '',
+    channels_checked INTEGER DEFAULT 0,
+    risky INTEGER DEFAULT 0,
+    stopped TEXT
+);
+CREATE TABLE IF NOT EXISTS scout_steps (
+    run_id INTEGER NOT NULL REFERENCES scout_runs(id),
+    seq INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    channel TEXT,
+    via TEXT,
+    parent TEXT,
+    detail TEXT,
+    depth INTEGER,
+    priority REAL,
+    risk REAL,
+    level TEXT,
+    note TEXT,
+    PRIMARY KEY (run_id, seq)
+);
 CREATE TABLE IF NOT EXISTS user_reports (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -648,6 +673,27 @@ class Database:
     def scout_add_edge(self, src: str, dst: str, via: str, detail: str = "") -> None:
         self._exec("INSERT OR IGNORE INTO scout_edges (src, dst, via, detail, first_seen) VALUES (?,?,?,?,?)",
                    (src, dst, via, detail, utcnow()))
+
+    def scout_save_run(self, run: dict[str, Any], steps: Sequence[dict[str, Any]]) -> int:
+        """Журнал запуска разведчика: шаги по порядку, чтобы показать, как агент шёл по сети и почему."""
+        cols = ("kind", "channel", "via", "parent", "detail", "depth", "priority", "risk", "level", "note")
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO scout_runs (started_at, finished_at, source, seeds, channels_checked, risky, stopped) VALUES (?,?,?,?,?,?,?)",
+                (run["started_at"], run["finished_at"], run["source"], ",".join(run["seeds"]), run["channels_checked"],
+                 run["risky"], run.get("stopped")))
+            run_id = int(cur.lastrowid)
+            self._conn.executemany(
+                f"INSERT INTO scout_steps (run_id, seq, {', '.join(cols)}) VALUES (?,?,{', '.join('?' * len(cols))})",
+                [(run_id, i, *(s.get(c) for c in cols)) for i, s in enumerate(steps)])
+        return run_id
+
+    def scout_last_run(self) -> dict[str, Any] | None:
+        run = self._one("SELECT * FROM scout_runs ORDER BY id DESC LIMIT 1")
+        if run:
+            run["seeds"] = [s for s in run["seeds"].split(",") if s]
+            run["steps"] = self._all("SELECT * FROM scout_steps WHERE run_id=? ORDER BY seq", (run["id"],))
+        return run
 
     def scout_edges(self) -> list[dict[str, Any]]:
         return self._all("SELECT src, dst, via, detail, first_seen FROM scout_edges ORDER BY first_seen, src, dst")
