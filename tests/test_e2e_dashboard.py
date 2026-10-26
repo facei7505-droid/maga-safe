@@ -132,3 +132,26 @@ def test_analyst_flow_end_to_end(server: str, browser) -> None:
     assert "+77019998877" in page.locator("#bank-rows tr", has=page.locator(".list-badge.black")).first.inner_text()
 
     assert errors == []
+
+
+def test_demo_tour_walks_every_step_without_errors(server: str, browser) -> None:
+    # Arrange
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(server, wait_until="networkidle")
+
+    # Act: пять шагов сценария показа
+    page.locator("#tour-btn").click()
+    views = []
+    for step in range(1, 6):
+        page.locator(".tour-n", has_text=f"Шаг {step} из 5").wait_for()
+        page.wait_for_timeout(600)
+        views.append(page.evaluate("() => [...document.querySelectorAll('.view')].find(v => !v.classList.contains('hidden')).id"))
+        page.locator(".tour button.primary").click()
+
+    # Assert: тур прошёл обзор, кейс, проверку, банк и разведку и закрылся
+    assert views == ["view-overview", "view-queue", "view-check", "view-bank", "view-scout"]
+    assert page.locator(".tour").is_hidden()
+    assert errors == []
+    page.close()

@@ -392,3 +392,9 @@ img.broken { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) { .step { animation: none; } }
 .trace { margin: 12px 0; border: 1px solid var(--line); border-radius: var(--r-sm, 8px); padding: 8px 12px; }
 .trace summary { cursor: pointer; }
+/* демо-тур */
+.tour-btn { justify-content: center; }
+.tour { position: fixed; right: 20px; bottom: 20px; width: min(360px, calc(100vw - 32px)); z-index: 60; background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 32px rgba(0,0,0,.18); }
+.tour p { margin: 6px 0 10px; color: var(--ink-2); }
+.tour-actions { gap: 8px; justify-content: flex-end; }
+@media (max-width: 860px) { .tour { right: 16px; bottom: 16px; } .tour-btn { order: 2; } }

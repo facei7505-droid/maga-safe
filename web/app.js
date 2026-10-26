@@ -7,6 +7,7 @@ import {
 } from "./lib.js";
 import { loadOverview } from "./overview.js";
 import { loadScout } from "./scout.js";
+import { initTour } from "./tour.js";
 
 const POSTS_PAGE = 12;
 const state = { cases: [], current: null, view: "overview" };
@@ -605,6 +606,7 @@ function init() {
   $("#modal-close").addEventListener("click", closeModal);
   $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
   document.addEventListener("keydown", onKey);
+  $("#tour-btn").addEventListener("click", initTour({ switchView, openCase, closeModal }));
   loadStats();
   loadCases();
   const hash = decodeURIComponent(location.hash.slice(1));
