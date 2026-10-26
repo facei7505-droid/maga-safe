@@ -122,7 +122,8 @@ class Detector:
         return {track: self._classifier.explain(folded, track) for track, p in ml.items()
                 if track != "legit" and p >= ML_CONFIRM}
 
-    def detect(self, sources: list[SourceText], context: list[Evidence] | None = None, allow_llm: bool = True) -> Detection:
+    def detect(self, sources: list[SourceText], context: list[Evidence] | None = None, allow_llm: bool = True,
+               resolve_links: bool = True) -> Detection:
         evidence: list[Evidence] = []
         requisites: list[Requisite] = []
         links: list[Link] = []
@@ -146,7 +147,8 @@ class Detector:
                 if req.key not in req_keys:
                     req_keys.add(req.key)
                     requisites.append(req)
-            if self._settings.resolve_links:
+            # сеть только для доверенных запросов: анонимный бот не заставляет сервер ходить по чужим ссылкам
+            if self._settings.resolve_links and resolve_links:
                 found_links = [resolve_shortener(link) if i < MAX_RESOLVE_PER_POST else link
                                for i, link in enumerate(found_links)]
             links.extend(found_links)

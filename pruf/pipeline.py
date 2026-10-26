@@ -263,14 +263,14 @@ class Pruf:
         qr = self._read_qr(img for _, img in decoded)
         sources = [SourceText("text", text or ""), SourceText("ocr", ocr_text), SourceText("qr", "\n".join(qr)),
                    SourceText("voice", transcript or "")]
-        first = self.detector.detect(sources, allow_llm=False)
+        first = self.detector.detect(sources, allow_llm=False, resolve_links=False)
         context = self._proof_context(got)
         # Анонимный бот не отвечает «есть ли этот номер в базе» на голый реквизит: иначе мошенник
         # проверяет, засвечена ли его карта. Контекст реестра по реквизитам только если сам текст
         # уже даёт средний риск. LLM для анонимов выключен: иначе любой может тратить бюджет API.
         if not public or first.analysis.level in RISKY_LEVELS:
             context += self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
-        analysis = self.detector.detect(sources, context, allow_llm=allow_llm and not public).analysis
+        analysis = self.detector.detect(sources, context, allow_llm=allow_llm and not public, resolve_links=not public).analysis
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))

@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 MAX_CODES = 5  # на афише бывает несколько кодов; больше — уже коллаж, остальные не читаем
 MAX_PAYLOAD = 1000  # QR вмещает до ~3 КБ; длинное содержимое обрезаем, детектору хватит начала
 MAX_SIDE = 2000  # крупные скриншоты уменьшаем: QR от этого не теряется, а поиск идёт в разы быстрее
+BLOCK = 31  # окно адаптивного порога: несколько модулей QR при наших размерах картинки
 MIN_SIDE = 1000  # мелкие превью увеличиваем: детектор OpenCV плохо находит модуль QR меньше 3–4 пикселей
 _detector = None
 _lock = threading.Lock()
@@ -50,6 +51,12 @@ def _prepared(img: Image.Image) -> np.ndarray:
     return np.asarray(gray)
 
 
+def _binarized(gray: np.ndarray) -> np.ndarray:
+    import cv2
+
+    return cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, BLOCK, 5)
+
+
 def decode_qr(img: Image.Image) -> list[str]:
     """Содержимое QR-кодов на изображении, без повторов. Ошибка декодера не ломает анализ: кодов просто нет."""
     try:
@@ -63,8 +70,12 @@ def decode_qr(img: Image.Image) -> list[str]:
             ok, payloads, _, _ = detector.detectAndDecodeMulti(arr)
             found = list(payloads) if ok else []
             if not any(found):
-                single, _, _ = detector.detectAndDecode(arr)
+                single, points, _ = detector.detectAndDecode(arr)
                 found = [single]
+                if not single and points is not None:
+                    # контур QR найден, но модули смазаны (фото афиши с рук): адаптивный порог их проявляет.
+                    # Только в этом случае, чтобы картинки без QR не платили за вторую попытку.
+                    found = [detector.detectAndDecode(_binarized(arr))[0]]
     except Exception:  # noqa: BLE001 — cv2.error и сбои на битых картинках
         log.warning("QR не прочитан", exc_info=True)
         return []

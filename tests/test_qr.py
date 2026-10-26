@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from pruf.normalize.qr import decode_qr
 from pruf.pipeline import Pruf, Submission, Upload
@@ -98,3 +98,64 @@ def test_qr_can_be_switched_off(tmp_path: Path) -> None:
         assert not result["analysis"]["requisites"]
     finally:
         p.db.close()
+
+
+def test_short_links_are_resolved_only_for_trusted_checks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: раскрытие ссылок включено; анонимный бот не должен заставлять сервер ходить в сеть
+    calls: list[str] = []
+    monkeypatch.setattr("pruf.detect.detector.resolve_shortener", lambda link: calls.append(link.url) or link)
+    p = Pruf(make_settings(tmp_path, resolve_links=True), ocr_enabled=False)
+    text = "Розыгрыш! Участие 1000 тг, подробности bit.ly/abc123"
+    try:
+        # Act
+        p.check(text, public=True)
+        anonymous = len(calls)
+        p.check(text)
+
+        # Assert
+        assert anonymous == 0
+        assert calls == ["http://bit.ly/abc123"]
+    finally:
+        p.db.close()
+
+
+def _jpeg_roundtrip(img: Image.Image, quality: int) -> Image.Image:
+    return Image.open(io.BytesIO(_jpeg_q(img, quality))).convert("RGB")
+
+
+def _jpeg_q(img: Image.Image, quality: int) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=quality)
+    return buf.getvalue()
+
+
+def _perspective(img: Image.Image, k: float) -> Image.Image:
+    import numpy as np
+
+    a = np.asarray(img)
+    h, w = a.shape[:2]
+    src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+    dst = np.float32([[w * k, h * k / 2], [w * (1 - k * 0.3), 0], [w, h], [0, h * (1 - k)]])
+    return Image.fromarray(cv2.warpPerspective(a, cv2.getPerspectiveTransform(src, dst), (w, h), borderValue=(255, 255, 255)))
+
+
+def _noisy(img: Image.Image, sigma: float) -> Image.Image:
+    import numpy as np
+
+    a = np.asarray(img).astype(np.int16) + np.random.default_rng(0).normal(0, sigma, (img.height, img.width, 3)).astype(np.int16)
+    return Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
+
+
+@pytest.mark.parametrize("name, make", [
+    ("поворот 25°", lambda img: img.rotate(25, expand=True, fillcolor="white")),
+    ("перспектива: афиша снята сбоку", lambda img: _perspective(img, 0.3)),
+    ("размытие", lambda img: img.filter(ImageFilter.GaussianBlur(2.5))),
+    ("JPEG качества 10", lambda img: _jpeg_roundtrip(img, 10)),
+    ("шум сенсора", lambda img: _noisy(img, 40)),
+    ("тёмный снимок", lambda img: Image.eval(img, lambda v: v // 3)),
+    ("пересжатие Telegram 640 px", lambda img: _jpeg_roundtrip(img.resize((512, 640)), 70)),
+    ("всё вместе: фото с рук", lambda img: _jpeg_roundtrip(_noisy(_perspective(img.rotate(6, expand=True, fillcolor="white"), 0.12)
+                                                                  .filter(ImageFilter.GaussianBlur(1)), 12), 40)),
+])
+def test_qr_survives_photo_like_distortions(name: str, make) -> None:
+    assert decode_qr(make(_poster(KASPI_PAY))) == [KASPI_PAY], name
