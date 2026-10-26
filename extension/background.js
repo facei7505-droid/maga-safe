@@ -124,6 +124,8 @@ function describe(result) {
   const found = result.requisites.filter((r) => r.found);
   if (!result.requisites.length) return "Не похоже на номер карты, телефон, IBAN или ссылку Kaspi.";
   if (!found.length) return `${result.requisites[0].value}: в реестре ПРУФ не найден. Это не гарантия честности.`;
+  const black = found.find((r) => r.list === "black");
+  if (black) return `${black.value}: в чёрном списке ПРУФ, схему подтвердил аналитик. Не переводите деньги.`;
   const tracks = found.flatMap((r) => r.tracks).join(", ");
   return `${found[0].value}: встречался в постах с признаками схем${tracks ? " (" + tracks + ")" : ""}. Не переводите деньги.`;
 }

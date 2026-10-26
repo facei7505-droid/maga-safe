@@ -4,7 +4,7 @@
 (function () {
   "use strict";
 
-  const { buildPayload, worthChecking, localVerdict, extractRequisites } = globalThis.PrufExtract;
+  const { buildPayload, worthChecking, localVerdict, extractRequisites, copyWarning } = globalThis.PrufExtract;
   // Telegram Web A (.text-content), Telegram Web K (.message), Instagram (article), WhatsApp Web (сообщение
   // с data-pre-plain-text; поле ввода его не имеет). Один селектор на площадку, чтобы вложенные элементы
   // одного поста не проверялись дважды.
@@ -172,8 +172,8 @@
     const requisites = extractRequisites(selection);
     if (!requisites.length) return;
     const reply = await chrome.runtime.sendMessage({ type: "checkRequisites", requisites }).catch(() => null);
-    const hit = reply && reply.ok && reply.data.requisites.find((r) => r.found);
-    if (hit) toast(`⚠ ПРУФ: ${hit.value} уже встречался в постах с признаками схем. Не переводите деньги, пока не проверите получателя.`);
+    const warning = reply && reply.ok && copyWarning(reply.data.requisites);
+    if (warning) toast(warning);
   });
 
   const observer = new MutationObserver((mutations) => {

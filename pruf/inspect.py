@@ -48,6 +48,7 @@ CUES: dict[str, Cue] = {
     "urgency": Cue("common", "давление срочностью", "Давление срочностью: «осталось 5 мест», «только сегодня»", 10),
 }
 REQUISITE_WEIGHT = 35
+BLACK_WEIGHT = 65  # номер из кейса, подтверждённого аналитиком: плашку показываем по одному этому признаку
 DOMAIN_WEIGHT = 40
 TEXT_COPY_WEIGHT = 50
 # Жалобы не меняют ответ расширению: токен расширения общий, и номер конкурента можно было бы оговорить
@@ -124,7 +125,10 @@ class Inspector:
             if cue.track != "common":
                 track_points[cue.track] = track_points.get(cue.track, 0) + cue.weight
         checked = self._check_requisites(requisites)
-        if any(r["found"] for r in checked):
+        if any(r["list"] == "black" for r in checked):
+            reasons.append({"id": "registry.black", "short": "номер в чёрном списке",
+                            "label": "Аналитик ПРУФ подтвердил схему с этим номером: не переводите деньги", "weight": BLACK_WEIGHT})
+        elif any(r["found"] for r in checked):
             tracks = sorted({t for r in checked for t in r["tracks"]})
             reasons.append({"id": "registry.requisite", "short": "реквизит засвечен в схемах",
                             "label": "Этот номер или реквизит уже встречался в постах с признаками схем", "weight": REQUISITE_WEIGHT})
@@ -150,8 +154,11 @@ class Inspector:
             if req.kind == "promo":
                 continue
             found = self._db.lookup_requisite(req.key)
-            # Без счётчиков и каналов: расширение отвечает «засвечен или нет», а не раскрывает базу
+            if found and found["list"] == "cleared":
+                found = None  # аналитик отклонил кейс: честный номер не предупреждаем
+            # Без счётчиков и каналов: расширение отвечает «засвечен или нет» и в каком списке, а не раскрывает базу
             out.append({"type": req.kind, "value": req.display, "found": bool(found),
+                        "list": found["list"] if found else None,
                         "tracks": sorted(set((found["tracks"] or "").split(",")) - {""}) if found else []})
         return out
 

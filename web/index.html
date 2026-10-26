@@ -114,16 +114,25 @@
             <input id="bank-value" placeholder="+7 777 123 45 67, номер карты, IBAN KZ или kaspi.kz/pay/…" aria-label="Реквизит">
             <button type="submit">Проверить</button>
           </div>
-          <p class="muted small">Значение не сохраняется. Ответ — признаки для проверки, а не основание для блокировки.</p>
+          <p class="muted small">Значение не сохраняется. Серый номер: проверить за 3 рабочих дня. Чёрный: только после подтверждения аналитиком. Снят: кейс отклонён, номер не блокируют.</p>
           <div id="bank-check-result"></div>
         </form>
         <div class="panel table-panel">
           <div class="row bank-head">
             <h3>Лента реквизитов</h3>
-            <input id="bank-search" type="search" placeholder="Фильтр по значению или кейсу" aria-label="Фильтр реквизитов">
+            <div class="row">
+              <select id="bank-list" aria-label="Список">
+                <option value="">Все списки</option>
+                <option value="grey">Серый: проверить</option>
+                <option value="black">Чёрный: подтверждён</option>
+                <option value="cleared">Снят: не блокировать</option>
+              </select>
+              <input id="bank-search" type="search" placeholder="Фильтр по значению или кейсу" aria-label="Фильтр реквизитов">
+              <button id="bank-csv" type="button">CSV для обмена</button>
+            </div>
           </div>
           <div class="table-scroll">
-            <table class="table"><thead><tr><th>Тип</th><th>Значение</th><th>Балл</th><th>Постов</th><th>Треки</th><th>Кейсы</th><th>Последний раз</th></tr></thead><tbody id="bank-rows"></tbody></table>
+            <table class="table"><thead><tr><th>Тип</th><th>Значение</th><th>Список</th><th>Балл</th><th>Постов</th><th>Треки</th><th>Кейсы</th><th>Последний раз</th></tr></thead><tbody id="bank-rows"></tbody></table>
           </div>
         </div>
         <div class="panel table-panel" id="reports-panel">

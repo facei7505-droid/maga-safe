@@ -166,8 +166,18 @@
     return payload.requisites.length > 0 || payload.links.length > 0 || payload.cues.length > 0;
   }
 
+  // Предупреждение при копировании номера. Чёрный список: аналитик подтвердил схему. Серый: номер замечен
+  // в постах с признаками. Снятый номер сервер отдаёт как found: false, и предупреждения нет.
+  function copyWarning(checked) {
+    const found = (checked || []).filter((r) => r && r.found);
+    const black = found.find((r) => r.list === "black");
+    if (black) return `⛔ ПРУФ: ${black.value} в чёрном списке, схему подтвердил аналитик. Не переводите деньги.`;
+    if (found.length) return `⚠ ПРУФ: ${found[0].value} уже встречался в постах с признаками схем. Не переводите деньги, пока не проверите получателя.`;
+    return null;
+  }
+
   const api = { extractRequisites, extractLinks, detectCues, foldForHash, textHash, buildPayload, worthChecking, luhnOk, cleanDigits,
-    localVerdict, CUE_INFO };
+    localVerdict, copyWarning, CUE_INFO };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.PrufExtract = api;
 })(typeof globalThis !== "undefined" ? globalThis : self);

@@ -364,7 +364,7 @@ def test_case_card_patch_and_export(with_case) -> None:
     assert card["posts"][0]["artifacts"] and card["posts"][0]["requisites"]
     assert card["families"] == [sorted([first["post_id"], second["post_id"]])]
     assert card["graph"]["nodes"]
-    assert patched.status_code == 200 and patched.json()["data"] == {"key": key, "status": "in_review"}
+    assert patched.status_code == 200 and patched.json()["data"] == {"key": key, "status": "in_review", "requisites_listed": 0}
     assert [c["key"] for c in status] == [key]
     assert export.status_code == 200 and export.headers["content-type"] == "application/zip"
     zf = zipfile.ZipFile(io.BytesIO(export.content))

@@ -40,6 +40,7 @@ from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
 from pruf.graph.builder import CaseGraph, artifact_timeline
 from pruf.inspect import REPORT_PLATFORMS, Inspector
+from pruf.lists import apply_case_decision, case_money_keys, export_ref, list_info, mask, to_csv
 from pruf.normalize.audio import transcribe, whisper_available
 from pruf.normalize.ocr import ocr_available
 from pruf.normalize.requisites import extract_requisites
@@ -59,6 +60,7 @@ WEB_DIR = ROOT / "web"
 
 
 JSON_MAX_BODY = 256 * 1024
+CSV_MAX_ROWS = 20_000
 
 def ok(data: Any, **meta: Any) -> dict[str, Any]:
     return {"success": True, "data": data, "error": None, "meta": meta or None}
@@ -305,7 +307,8 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             posts.append(post)
         status = p.db.case_statuses().get(key, {"status": "new", "note": None})
         return ok({"case": case.to_dict(), "status": status, "posts": posts, "graph": g.subgraph(case.post_ids),
-                   "families": g.families(case.post_ids), "network": g.case_network(key)})
+                   "families": g.families(case.post_ids), "network": g.case_network(key),
+                   "money_requisites": len(case_money_keys(p.db, case.post_ids))})
 
     @app.get("/api/v1/networks")
     def list_networks(limit: int = Query(20, ge=1, le=100), actor: str = Depends(analyst)):
@@ -317,11 +320,13 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     def update_case(key: str, body: CaseUpdate, actor: str = Depends(analyst)):
         if body.status not in CASE_STATUSES:
             raise HTTPException(status_code=400, detail="Статус: " + ", ".join(CASE_STATUSES))
-        if not graph().case(key):
+        case = graph().case(key)
+        if not case:
             raise HTTPException(status_code=404, detail="Кейс не найден")
         core().db.set_case_status(key, body.status, body.note, actor)
         core().db.audit(actor, "case_status", f"{key}:{body.status}")
-        return ok({"key": key, "status": body.status})
+        listed = apply_case_decision(core().db, key, case.post_ids, body.status, actor, (c.key for c in graph().cases()))
+        return ok({"key": key, "status": body.status, "requisites_listed": listed})
 
     @app.get("/api/v1/cases/{key}/export")
     def export_case(key: str, actor: str = Depends(analyst)):
@@ -405,23 +410,45 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         return ok(overview(core().db, [c.key for c in g.cases()], g.case_for_post))
 
     # ---------- банки ----------
-    @app.get("/api/v1/bank/requisites")
-    def bank_feed(since: str | None = Query(default=None, max_length=40),
-                  min_level: str = Query(default="medium", pattern="^(medium|high)$"),
-                  limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0),
-                  actor: str = Depends(bank)):
-        rows = core().db.requisite_feed(since, min_level, limit, offset)
+    def feed_rows(since: str | None, min_level: str, limit: int, offset: int, list_name: str | None) -> list[dict[str, Any]]:
+        rows = core().db.requisite_feed(since, min_level, limit, offset, list_name)
         g = graph()
         feed = []
         for r in rows:
             post_ids = core().db.posts_with_requisite(r["key"])
             cases = sorted({c for c in (g.case_for_post(pid) for pid in post_ids) if c})
-            feed.append({"id": r["id"], "type": r["kind"], "value": r["display"], "max_score": r["max_score"], "posts": r["posts"],
-                         "tracks": sorted(set((r["tracks"] or "").split(",")) - {""}), "cases": cases,
+            feed.append({"id": r["id"], "key": r["key"], "type": r["kind"], "value": r["display"], "max_score": r["max_score"],
+                         "posts": r["posts"], "tracks": sorted(set((r["tracks"] or "").split(",")) - {""}), "cases": cases,
                          "first_seen": r["first_seen"], "last_seen": r["last_seen"],
+                         **list_info(r["list"], r["decided"], r["grey_since"]),
                          "note": "Найдены признаки использования реквизита в схемах; не является основанием для блокировки без проверки"})
+        return feed
+
+    @app.get("/api/v1/bank/requisites")
+    def bank_feed(since: str | None = Query(default=None, max_length=40),
+                  min_level: str = Query(default="medium", pattern="^(medium|high)$"),
+                  list_name: str | None = Query(default=None, alias="list", pattern="^(grey|black|cleared)$"),
+                  limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0),
+                  actor: str = Depends(bank)):
+        feed = [{k: v for k, v in row.items() if k != "key"} for row in feed_rows(since, min_level, limit, offset, list_name)]
         core().db.audit(actor, "bank_feed", f"{len(feed)} rows")
         return ok(feed, limit=limit, offset=offset)
+
+    @app.get("/api/v1/bank/requisites.csv")
+    def bank_feed_csv(since: str | None = Query(default=None, max_length=40),
+                      min_level: str = Query(default="medium", pattern="^(medium|high)$"),
+                      list_name: str | None = Query(default=None, alias="list", pattern="^(grey|black|cleared)$"),
+                      actor: str = Depends(bank)):
+        """Выгрузка для обмена (Антифрод-центр, банки): HMAC-ссылка и маска вместо номера, статус, срок, основание."""
+        key = core().settings.effective_hmac_key()
+        found = feed_rows(since, min_level, CSV_MAX_ROWS + 1, 0, list_name)
+        rows = [{**r, "ref": export_ref(r["key"], key), "value_masked": mask(r["type"], r["value"]),
+                 "cases": " ".join(r["cases"]), "reason": r["list_reason"]} for r in found[:CSV_MAX_ROWS]]
+        core().db.audit(actor, "bank_feed_csv", f"{len(rows)} rows")
+        # Обрезанную выгрузку видно по заголовку: тогда выгружать частями через since
+        return Response(to_csv(rows), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="pruf_requisites.csv"', "Cache-Control": "no-store",
+                                 "X-PRUF-Truncated": "1" if len(found) > CSV_MAX_ROWS else "0"})
 
     @app.post("/api/v1/bank/check")
     def bank_check(body: RequisiteCheck, actor: str = Depends(bank)):
@@ -435,7 +462,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             return ok({"found": False, "type": reqs[0].kind})
         return ok({"found": True, "type": found["kind"], "value": found["display"], "posts": found["posts"],
                    "max_score": found["max_score"], "tracks": sorted(set((found["tracks"] or "").split(",")) - {""}),
-                   "first_seen": found["first_seen"],
+                   "first_seen": found["first_seen"], **list_info(found["list"], found["decided"], found["grey_since"]),
                    "note": "Найдены признаки использования реквизита в схемах; требуется проверка банком"})
 
     # ---------- расширение ПРУФ Sentinel ----------

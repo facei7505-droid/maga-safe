@@ -71,3 +71,12 @@ test("payload holds no post text", async () => {
 test("plain chat message is not sent to the server", async () => {
   assert.equal(X.worthChecking(await X.buildPayload("Привет, как дела? Встречаемся вечером у фонтана", [])), false);
 });
+
+test("copy warning is stronger for the black list and silent for cleared numbers", () => {
+  const black = X.copyWarning([{ value: "+77473185264", found: true, list: "black" }]);
+  assert.match(black, /чёрном списке/);
+  const grey = X.copyWarning([{ value: "+77019998877", found: true, list: "grey" }]);
+  assert.match(grey, /встречался в постах/);
+  assert.equal(X.copyWarning([{ value: "+77015554433", found: false, list: null }]), null);
+  assert.match(X.copyWarning([{ value: "a", found: true, list: "grey" }, { value: "b", found: true, list: "black" }]), /b в чёрном/);
+});
