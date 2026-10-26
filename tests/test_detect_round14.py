@@ -80,6 +80,9 @@ def test_kaspi_qr_is_not_a_transfer_request(detector: Detector) -> None:
     ids = _ids(_analyze(detector, "Оплата по Kaspi QR на кассе, доставка по городу бесплатно"))
     assert "common.kaspi_transfer" not in ids
     assert "common.kaspi_transfer" in _ids(_analyze(detector, "Оплата на каспи 87011234567, после перевода скиньте чек"))
+    # «картинка», «карточка товара» — не банковская карта
+    assert "common.kaspi_transfer" not in _ids(_analyze(detector, "Оплата по QR на картинке, доставка завтра"))
+    assert "common.kaspi_transfer" in _ids(_analyze(detector, "Переведи на карту 4400 4301 2345 6789 до вечера"))
 
 
 def test_job_offer_with_monthly_salary_is_marked_legal(detector: Detector) -> None:
