@@ -203,3 +203,43 @@ def test_banner_works_offline_with_local_verdict(context, server: str) -> None:
         page.close()
     finally:
         worker.evaluate("url => chrome.storage.local.set({apiUrl: url})", server)
+
+
+def test_kazakh_interface_for_banner_copy_warning_and_block_page(context) -> None:
+    ctx, worker = context
+    worker.evaluate("() => chrome.storage.local.set({lang: 'kk'})")
+    try:
+        page = ctx.new_page()
+        page.goto("https://web.telegram.org/k/")
+        banner = page.locator("#scam .pruf-host")
+        banner.wait_for(state="attached", timeout=10_000)
+        text = banner.evaluate("h => h.shadowRoot.textContent")
+        assert "Қаржы пирамидасының белгілері" in text and "табыс уәдесі" in text and "Неге?" in text
+        reasons = banner.evaluate("h => { h.shadowRoot.querySelector('button').click(); "
+                                  "return h.shadowRoot.textContent }")
+        assert "Шақырылған достар үшін табыс" in reasons and "ақша аудармаңыз" in reasons
+
+        page.goto("https://web.whatsapp.com/")
+        page.locator("#wa-num").wait_for()
+        page.evaluate("""() => {
+            const range = document.createRange();
+            range.selectNodeContents(document.querySelector('#wa-num span'));
+            getSelection().removeAllRanges();
+            getSelection().addRange(range);
+            document.dispatchEvent(new ClipboardEvent('copy', { bubbles: true }));
+        }""")
+        toast = page.locator("body > .pruf-host")
+        toast.wait_for(state="attached", timeout=10_000)
+        assert "алаяқтық белгілері бар посттарда кездескен" in toast.evaluate("h => h.shadowRoot.textContent")
+
+        try:
+            page.goto("https://joy-slots-kz.top/x")  # не promo.: тому домену раньше разрешили «всё равно перейти»
+        except playwright_api.Error:
+            pass
+        page.wait_for_url(re.compile(r"^chrome-extension://[a-z]+/warning\.html#"), timeout=10_000)
+        page.wait_for_function("document.documentElement.lang === 'kk'")
+        assert page.locator("h1").text_content() == "Бұл сайт ПРУФ қара тізімінде"
+        assert page.locator("#back").text_content() == "Артқа қайту"
+        page.close()
+    finally:
+        worker.evaluate("() => chrome.storage.local.set({lang: 'auto'})")

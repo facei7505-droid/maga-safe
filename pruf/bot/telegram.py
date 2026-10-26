@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from PIL import Image, UnidentifiedImageError
 
 from pruf.api.security import RateLimiter, sniff_upload
-from pruf.models import LEVEL_LABELS
+from pruf.bot.texts import LEVELS, TRACKS, reply_lang, say
 from pruf.normalize.audio import transcribe, whisper_available
 from pruf.pipeline import Pruf
 
@@ -32,13 +32,7 @@ GLOBAL_LIMIT_PER_MINUTE = 120  # общий потолок: много чато�
 MAX_VOICE_SECONDS = 120
 POLL_TIMEOUT = 30
 LEVEL_ICON = {"high": "🔴", "medium": "🟠", "low": "🟢"}
-TRACK_NAME = {"lottery": "платный розыгрыш", "casino": "скрытая реклама казино", "pyramid": "финансовая пирамида"}
-HELP = (
-    "Я ПРУФ. Перешлите подозрительный пост, скриншот «выплаты» или голосовое, и я покажу, "
-    "какие признаки схем в нём есть: платные розыгрыши, скрытая реклама казино, пирамиды.\n\n"
-    "Я ищу признаки, а не выношу вердикт. Если сомневаетесь, не переводите деньги и проверьте "
-    "организатора по официальным источникам."
-)
+HELP = say("ru", "help")
 
 
 class TelegramApi(Protocol):
@@ -69,38 +63,41 @@ class BotLogic:
         chat = msg.get("chat") or {}
         if not isinstance(chat.get("id"), int) or chat.get("type") != "private":
             return None
+        lang = reply_lang(msg.get("text") or msg.get("caption") or "", (msg.get("from") or {}).get("language_code"))
         try:
-            reply = self._answer(chat["id"], msg)
+            reply = self._answer(chat["id"], msg, lang)
         except Exception:
             log.exception("ошибка проверки сообщения")
-            reply = Reply(chat["id"], "Не удалось проверить сообщение, попробуйте позже.", msg.get("message_id"))
+            reply = Reply(chat["id"], say(lang, "check_failed"), msg.get("message_id"))
         if reply:
             self._api.send_message(reply.chat_id, reply.text[:MAX_MESSAGE], reply.reply_to)
         return reply
 
-    def _answer(self, chat: int, msg: dict[str, Any]) -> Reply | None:
+    def _answer(self, chat: int, msg: dict[str, Any], lang: str = "ru") -> Reply | None:
         text = msg.get("text") or msg.get("caption") or ""
         mid = msg.get("message_id")
         try:
             self._limiter.check(f"tg:{chat}")
             self._global.check("tg:all")
         except HTTPException:
-            return Reply(chat, "Слишком много сообщений, попробуйте через минуту.", mid)
+            return Reply(chat, say(lang, "too_many"), mid)
         if text.strip().split("@")[0] in ("/start", "/help"):
-            return Reply(chat, HELP)
+            return Reply(chat, say(lang, "help"))
         try:
-            images, transcript, note = self._media(msg)
+            images, transcript, note_key = self._media(msg)
         except _MediaError as exc:
-            return Reply(chat, str(exc), mid)
+            return Reply(chat, say(lang, exc.key, **exc.values), mid)
+        note = say(lang, note_key) if note_key else None
         if not text.strip() and not images and not transcript:
-            return Reply(chat, note or "Пришлите текст поста, скриншот или голосовое.", mid)
+            return Reply(chat, note or say(lang, "send_something"), mid)
         try:
             result = self._pruf.check(text, images=tuple(images), transcript=transcript, public=True)
         except (UnidentifiedImageError, ValueError, OSError, Image.DecompressionBombError):
-            return Reply(chat, "Не получилось прочитать изображение. Пришлите JPEG или PNG до 8 МБ.", mid)
-        return Reply(chat, format_result(result, note), mid)
+            return Reply(chat, say(lang, "bad_image"), mid)
+        return Reply(chat, format_result(result, note, lang), mid)
 
     def _media(self, msg: dict[str, Any]) -> tuple[list[bytes], str | None, str | None]:
+        """Картинки, расшифровка голосового и ключ пояснения (pruf/bot/texts.py), если что-то не проверено."""
         images: list[bytes] = []
         transcript = None
         note = None
@@ -113,32 +110,37 @@ class BotLogic:
         voice = msg.get("voice") or msg.get("audio")
         if voice:
             if not whisper_available():
-                note = "Расшифровка голосовых сейчас не включена на сервере, проверил только текст и изображения."
+                note = "whisper_off"
             elif int(voice.get("duration") or 0) > MAX_VOICE_SECONDS:
-                raise _MediaError(f"Голосовое длиннее {MAX_VOICE_SECONDS // 60} минут, пришлите фрагмент или текст.")
+                raise _MediaError("voice_too_long", minutes=MAX_VOICE_SECONDS // 60)
             else:
                 data, ext = self._fetch(voice["file_id"], "audio")
                 transcript = transcribe(data, "." + ext)
                 if transcript is None:
-                    note = "Не удалось расшифровать голосовое, проверил только текст и изображения."
+                    note = "voice_failed"
         return images, transcript, note
 
     def _fetch(self, file_id: str, kind: str) -> tuple[bytes, str]:
         size, path = self._api.file_size_and_path(file_id)
         if size > self._max_bytes:
-            raise _MediaError("Файл слишком большой, пришлите до 8 МБ.")
+            raise _MediaError("too_big")
         data = self._api.download(path, self._max_bytes)
         try:
             got, ext = sniff_upload(data, None, None)
         except HTTPException as exc:
-            raise _MediaError("Поддерживаются JPEG, PNG, WEBP и голосовые сообщения.") from exc
+            raise _MediaError("unsupported") from exc
         if got != kind:
-            raise _MediaError("Формат файла не совпадает с типом сообщения.")
+            raise _MediaError("type_mismatch")
         return data, ext
 
 
 class _MediaError(Exception):
-    pass
+    """Файл не проверить; key — текст ответа в pruf/bot/texts.py."""
+
+    def __init__(self, key: str, **values: object):
+        super().__init__(say("ru", key, **values))
+        self.key = key
+        self.values = values
 
 
 def _best_photo(sizes: list[dict[str, Any]], max_bytes: int) -> dict[str, Any] | None:
@@ -147,34 +149,30 @@ def _best_photo(sizes: list[dict[str, Any]], max_bytes: int) -> dict[str, Any] |
     return max(fitting, key=lambda s: int(s.get("width", 0)) * int(s.get("height", 0)), default=None)
 
 
-def format_result(result: dict[str, Any], note: str | None = None) -> str:
+def format_result(result: dict[str, Any], note: str | None = None, lang: str = "ru") -> str:
     """Ответ простым текстом (без parse_mode): цитаты из поста не могут сломать разметку.
     Сигналы реестра приходят уже обезличенными (Pruf.check(public=True)): без каналов, сумм и счётчиков."""
     a = result["analysis"]
     level = a["level"]
-    head = f"{LEVEL_ICON.get(level, '')} Риск: {LEVEL_LABELS.get(level, level)} ({round(a['score'])}/100)"
+    head = f"{LEVEL_ICON.get(level, '')} " + say(lang, "risk", level=LEVELS[lang].get(level, level), score=round(a["score"]))
     if a.get("track"):
-        head += f"\nПохоже на: {TRACK_NAME.get(a['track'], a['track'])}"
+        head += "\n" + say(lang, "looks_like", track=TRACKS[lang].get(a["track"], a["track"]))
     lines = [head]
     positive = [e for e in a.get("evidence", []) if e.get("weight", 0) > 0]
     if positive:
-        lines.append("\nНайденные признаки:")
+        lines.append("\n" + say(lang, "found") + (" " + say(lang, "labels_ru") if lang == "kk" else ""))
         for e in positive[:MAX_EVIDENCE_LINES]:
             quote = f"\n   «{e['quote'][:160]}»" if e.get("quote") else ""
             lines.append(f"• {e['label']}{quote}")
     stops = [e for e in a.get("evidence", []) if e.get("stop")]
     if stops:
-        lines.append("\nПризнаки легальности: " + "; ".join(e["label"] for e in stops[:3]))
+        lines.append("\n" + say(lang, "legal") + "; ".join(e["label"] for e in stops[:3]))
     for d in a.get("degraded", []):
         lines.append(f"\n⚠️ {d['reason']}")
     if note:
         lines.append(f"\n{note}")
-    if level != "low":
-        lines.append("\nНе переводите деньги незнакомым организаторам. Это признаки, а не вердикт.")
-    elif positive:
-        lines.append("\nСочетания признаков для среднего риска нет, но есть сигналы выше: будьте осторожны.")
-    else:
-        lines.append("\nЯвных признаков схем не нашёл. Это не гарантия: проверяйте организатора.")
+    advice = "advice_risk" if level != "low" else "advice_weak" if positive else "advice_clean"
+    lines.append("\n" + say(lang, advice))
     return "\n".join(lines)
 
 
@@ -213,7 +211,7 @@ class HttpTelegramApi:
                 for chunk in res.iter_bytes():
                     buf.extend(chunk)
                     if len(buf) > max_bytes:
-                        raise _MediaError("Файл слишком большой, пришлите до 8 МБ.")
+                        raise _MediaError("too_big")
         except httpx.HTTPError:
             raise RuntimeError("Telegram download failed") from None
         return bytes(buf)

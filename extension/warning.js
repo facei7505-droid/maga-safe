@@ -10,7 +10,13 @@
     url = null;
   }
   const okUrl = url && (url.protocol === "http:" || url.protocol === "https:");
-  document.getElementById("domain").textContent = okUrl ? url.hostname : "неизвестный адрес";
+  const domain = document.getElementById("domain");
+  domain.textContent = okUrl ? url.hostname : PrufI18n.t("ru", "warnUnknown");
+  chrome.storage.local.get({ lang: "auto" }).then((s) => {
+    const lang = PrufI18n.pickLang(s.lang, navigator.language);
+    PrufI18n.applyStatic(document, lang);
+    if (!okUrl) domain.textContent = PrufI18n.t(lang, "warnUnknown");
+  });
   chrome.runtime.sendMessage({ type: "blocked" });
 
   document.getElementById("back").addEventListener("click", () => {

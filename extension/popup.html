@@ -12,7 +12,7 @@
     .stat b { display: block; font-size: 20px; }
     .stat span { font-size: 11px; color: var(--muted); }
     label { display: block; font-size: 12px; color: var(--muted); margin-top: 8px; }
-    input { width: 100%; font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+    input, select { width: 100%; font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
     .row { display: flex; gap: 8px; margin-top: 10px; }
     details { margin-top: 10px; }
     #status { font-size: 12px; margin-top: 8px; }
@@ -21,25 +21,32 @@
 <body>
   <h1>ПРУФ Sentinel</h1>
   <div class="stats">
-    <div class="stat"><b id="checked">0</b><span>постов проверено</span></div>
-    <div class="stat"><b id="threats">0</b><span>угроз найдено</span></div>
-    <div class="stat"><b id="blocked">0</b><span>сайтов остановлено</span></div>
-    <div class="stat"><b id="copyWarnings">0</b><span>стопов при копировании</span></div>
-    <div class="stat"><b id="reported">0</b><span>жалоб отправлено</span></div>
+    <div class="stat"><b id="checked">0</b><span data-i18n="statChecked">постов проверено</span></div>
+    <div class="stat"><b id="threats">0</b><span data-i18n="statThreats">угроз найдено</span></div>
+    <div class="stat"><b id="blocked">0</b><span data-i18n="statBlocked">сайтов остановлено</span></div>
+    <div class="stat"><b id="copyWarnings">0</b><span data-i18n="statCopy">стопов при копировании</span></div>
+    <div class="stat"><b id="reported">0</b><span data-i18n="statReported">жалоб отправлено</span></div>
   </div>
   <div class="muted" id="blacklist">Чёрный список: ещё не загружен</div>
+  <label for="lang" data-i18n="language">Язык</label>
+  <select id="lang">
+    <option value="auto" data-i18n="langAuto">Авто (по браузеру)</option>
+    <option value="ru">Русский</option>
+    <option value="kk">Қазақша</option>
+  </select>
   <details>
-    <summary>Подключение к серверу ПРУФ</summary>
-    <label for="apiUrl">Адрес сервера</label>
+    <summary data-i18n="connection">Подключение к серверу ПРУФ</summary>
+    <label for="apiUrl" data-i18n="serverUrl">Адрес сервера</label>
     <input id="apiUrl" type="url" placeholder="http://127.0.0.1:8000">
-    <label for="token">Токен расширения</label>
+    <label for="token" data-i18n="token">Токен расширения</label>
     <input id="token" type="password" autocomplete="off">
     <div class="row">
-      <button class="primary" id="save" type="button">Сохранить</button>
-      <button id="refresh" type="button">Обновить список</button>
+      <button class="primary" id="save" type="button" data-i18n="save">Сохранить</button>
+      <button id="refresh" type="button" data-i18n="refreshList">Обновить список</button>
     </div>
   </details>
   <div id="status" class="muted"></div>
+  <script src="lib/i18n.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
