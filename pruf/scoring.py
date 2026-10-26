@@ -75,6 +75,9 @@ LLM_LEGIT = "llm.legit"  # LLM: пост целиком похож на лега
 STRONG_CONTEXT = 15.0
 CONTACT_COMBO_FEATURES = frozenset({"casino.fixed_match", "casino.money_game", "pyramid.high_return", "pyramid.mutual_aid",
                                     "lottery.entry_fee", "lottery.prize_fee"})
+# Схема целиком в одной фразе: «отправь 10 000 — получишь 20 000», «задания, но сначала пополни рабочий счёт».
+# Правило «нужен второй признак» к ним не применяется: «средний» уже есть, «высокий» по-прежнему требует сочетания.
+SELF_CONTAINED = frozenset({"pyramid.doubling", "pyramid.task_scam"})
 ML_CONTACT_COMBO = 0.3  # сигнал реестра/графа такой силы учитывается даже без признаков в тексте
 
 
@@ -151,7 +154,8 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     # Широкие признаки («приглашаю», «пакет от», «слоты», «розыгрыш») с «пишите в лс» — обычная реклама услуг.
     contact_combo = (has_contact and len(positives) == 1 and positives[0].feature_id in CONTACT_COMBO_FEATURES
                      and not warning and not any(e.stop for e in evidence) and (p_track is None or p_track >= ML_CONTACT_COMBO))
-    if len(positives) == 1 and not (unmasked or track_context or ml_confirms or contact_combo) and score > SINGLE_CAP:
+    self_contained = len(positives) == 1 and positives[0].feature_id in SELF_CONTAINED
+    if len(positives) == 1 and not (unmasked or track_context or ml_confirms or contact_combo or self_contained) and score > SINGLE_CAP:
         score, capped = SINGLE_CAP, "найден только один признак, нужен хотя бы ещё один"
     core_count = sum(1 for e in own.values() if e.core)
     if score >= HIGH_THRESHOLD and not (core_count >= 2 or (core_count >= 1 and (has_transfer or track_context))):
