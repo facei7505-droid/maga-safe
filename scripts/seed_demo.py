@@ -29,6 +29,7 @@ os.environ.setdefault("PRUF_DEV_MODE", "1")
 
 from pruf.config import ROOT, Settings
 from pruf.detect.classifier import TrackClassifier
+from pruf.detect.prod_model import install
 from pruf.detect.training import training_rows
 from pruf.graph.builder import CaseGraph
 from pruf.inspect import Inspector
@@ -88,6 +89,10 @@ def _log(msg: str) -> None:
 def ensure_model(settings: Settings, gen_seed: int = 42) -> TrackClassifier:
     clf = TrackClassifier.load(settings.model_path)
     if clf is not None:
+        return clf
+    installed = install(settings.model_path)
+    _log(("модель для прода из models/prod: " if installed.installed else "модель из models/prod не поставлена: ") + installed.reason)
+    if installed.installed and (clf := TrackClassifier.load(settings.model_path)) is not None:
         return clf
     _log(f"модели нет, обучаю на синтетике и ручных dev-наборах → {settings.model_path}")
     posts = Generator(seed=gen_seed).dataset(image_rate=0.0)

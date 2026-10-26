@@ -91,6 +91,11 @@ docker run -p 8000:8000 -e PRUF_ANALYST_TOKEN=demo:$(openssl rand -hex 16) \
   -e PRUF_HMAC_KEY=$(openssl rand -hex 32) -e ANTHROPIC_API_KEY=... pruf
 ```
 
+**Модель для прода.** Реальные посты (`eval/real_v*.jsonl`) в git не попадают, поэтому без них образ обучает модель
+только на синтетике и ручных наборах. Обученная с реальными постами модель кладётся в `models/prod` командой
+`python scripts/train.py --publish` там, где они лежат; сборка ставит её, если сошлись SHA-256 и версия scikit-learn
+([models/prod/README.md](models/prod/README.md)).
+
 **Render:** New → Blueprint → этот репозиторий. [`render.yaml`](render.yaml) сам сгенерирует токен аналитика и HMAC-ключ; `ANTHROPIC_API_KEY` введите в настройках сервиса (без него всё работает, только без Claude).
 
 Вне dev-режима дашборд просит токен аналитика (поле «Доступ» внизу меню) в формате `имя:токен` из `PRUF_ANALYST_TOKEN` — вводите только часть после двоеточия, если в токене есть имя.

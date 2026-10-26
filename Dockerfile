@@ -18,10 +18,13 @@ COPY pruf ./pruf
 COPY scripts ./scripts
 COPY web ./web
 COPY eval ./eval
+COPY models/prod ./models/prod
 COPY docker-entrypoint.sh ./
 
-# Модель обучается при сборке: синтетика + ручные dev-наборы, секреты не нужны
-RUN python scripts/gen_synthetic.py && PRUF_DEV_MODE=1 python scripts/train.py \
+# Модель: опубликованная в models/prod (обучена и на реальных постах, которых нет в git), если её хэш и версия
+# scikit-learn сходятся; иначе обучается при сборке на синтетике и ручных dev-наборах. Синтетика нужна демо в любом случае.
+RUN python scripts/gen_synthetic.py \
+ && (PRUF_DEV_MODE=1 python scripts/install_model.py --target "$PRUF_MODEL_PATH" || PRUF_DEV_MODE=1 python scripts/train.py) \
  && useradd --create-home --uid 10001 pruf && mkdir -p /app/data && chown -R pruf /app/data \
  && chmod +x docker-entrypoint.sh
 
