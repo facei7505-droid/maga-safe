@@ -388,6 +388,52 @@ function gauge(score, level) {
     el("div", { class: "gauge-v" }, Math.round(score)), el("div", { class: "gauge-l" }, LEVEL[level] || level));
 }
 
+// ---------------- как решала система ----------------
+// Спорная зона арбитра — LLM_ZONE в pruf/detect/detector.py (20 ≤ балл < 75)
+const LLM_STATUS = {
+  off: ["выключен", "ключ Claude на сервере не задан; решение по правилам и модели"],
+  not_needed: ["не понадобился", "балл вне спорной зоны 20–74: правила и модель уверены сами"],
+  ok: ["проверил пост", "добавленные им признаки — с дословными цитатами; цитаты, которых нет в тексте, отброшены"],
+  legit: ["счёл контекст легальным", "своих признаков схемы не нашёл; балл снижается, только если нет ссылок, реквизитов и просьб о деньгах"],
+  failed: ["не ответил", "балл посчитан без него"],
+};
+// 1 признак, 2 признака, 5 признаков
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  return `${n} ${m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many}`;
+}
+const SOURCES_READ = { text: "текст", ocr: "текст со скрина (OCR)", qr: "QR-код", voice: "голосовое" };
+
+function decisionTrace(a) {
+  const positive = a.evidence.filter((e) => e.weight > 0 && !["ml", "llm", "registry", "graph"].includes(e.source));
+  const stops = a.evidence.filter((e) => e.stop);
+  const ctx = a.evidence.filter((e) => e.source === "registry" || e.source === "graph");
+  const llm = a.evidence.filter((e) => e.source === "llm");
+  const read = [...new Set(a.evidence.map((e) => e.source).filter((s) => SOURCES_READ[s]))].map((s) => SOURCES_READ[s]);
+  const ml = a.tracks.filter((t) => t.ml_probability != null).sort((x, y) => y.ml_probability - x.ml_probability)[0];
+  const top = a.tracks.slice().sort((x, y) => y.score - x.score)[0];
+  const [llmTitle, llmNote] = LLM_STATUS[a.llm_status] || [a.llm_status, ""];
+  const uniq = (list) => [...new Set(list.map((e) => e.label))];
+  const steps = [
+    ["Прочитал", read.length ? read.join(", ") : "текст", "всё приведено к одному виду: транслит, казахские буквы, «к@зино» → «казино»"],
+    ["Правила словаря", positive.length ? plural(uniq(positive).length, "признак", "признака", "признаков") + " схемы" : "признаков схемы нет",
+      [uniq(positive).slice(0, 3).join("; "), stops.length ? `признаки легальности: ${uniq(stops).slice(0, 2).join("; ")}` : ""].filter(Boolean).join(" · ")],
+    ["ML-модель", ml ? `${TRACK[ml.track] || ml.track}: ${Math.round(ml.ml_probability * 100)}%` : "модели нет",
+      ml ? "символьные n-граммы; может поднять балл, но без признаков правил — не выше «среднего»" : "балл только по правилам"],
+    ["Реестр и граф", ctx.length ? plural(uniq(ctx).length, "связь", "связи", "связей") + " с другими постами" : "связей нет",
+      ctx.length ? uniq(ctx).slice(0, 2).join("; ") : "этот номер, скрин или текст в рискованных постах не встречались"],
+    ["Claude-арбитр", llmTitle, llm.length ? `${llmNote} · добавил: ${uniq(llm).slice(0, 2).join("; ")}` : llmNote],
+    ["Правила методики", top && top.capped_reason ? `потолок: ${top.capped_reason}` : "потолков нет",
+      "высокий риск — только при сочетании признаков; предупреждения и новости не считаются рекламой"],
+    ["Итог", `${LEVEL[a.level] || a.level} риск, балл ${Math.round(a.score)}`, "это признаки, а не вердикт: решает аналитик"],
+  ];
+  return el("details", { class: "trace", open: "" },
+    el("summary", {}, el("b", {}, "Как решала система")),
+    el("ol", { class: "steps" }, steps.map(([name, value, note], i) =>
+      el("li", { class: "step" + (i === steps.length - 1 ? " step-stop" : "") }, el("span", { class: "step-n" }, i + 1),
+        el("div", {}, el("b", {}, name + ": "), value, note ? el("div", { class: "muted small" }, note) : null)))));
+}
+
 function renderCheck(data, text) {
   const a = data.analysis;
   const tracks = a.tracks.map((t) => el("div", { class: "track-score" }, el("span", {}, `${TRACK[t.track]}: ${t.score}`), t.capped_reason ? el("span", { class: "muted" }, ` (${t.capped_reason})`) : null,
@@ -400,6 +446,7 @@ function renderCheck(data, text) {
     el("div", { class: "check-head" }, gauge(a.score, a.level),
       el("div", {}, el("h2", {}, "Риск ", badge(a.level, a.score), a.track ? el("span", {}, " ", chips([a.track])) : null), el("p", {}, a.summary))),
     (a.degraded || []).map((d) => el("div", { class: "banner" }, d.reason)),
+    decisionTrace(a),
     text ? el("div", {}, el("h3", {}, "Где найдены признаки"), highlighted(text, a.evidence, "text")) : null,
     el("div", { class: "grid2" }, el("div", {}, el("h3", {}, "Признаки"), groupEvidence(a.evidence).map(evidenceLine)),
       el("div", {}, el("h3", {}, "Баллы по трекам"), tracks, proofs,

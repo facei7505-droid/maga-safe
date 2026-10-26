@@ -95,6 +95,9 @@ def test_analyst_flow_end_to_end(server: str, browser) -> None:
     page.locator("#check-form button[type=submit]").click()
     page.wait_for_selector(".gauge")
     assert "высокий" in page.locator(".gauge").inner_text()
+    # ход решения: правила, модель, реестр, Claude-арбитр, потолки, итог
+    trace = page.locator(".trace").inner_text()
+    assert "Как решала система" in trace and "Правила словаря" in trace and "Claude-арбитр" in trace and "Итог: высокий" in trace
 
     # банк проверяет номер
     page.locator(".tab[data-view=bank]").click()
