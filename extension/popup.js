@@ -56,6 +56,23 @@
     await chrome.runtime.sendMessage({ type: "refresh" });
     render();
   });
+  $("manual").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const out = $("manualResult");
+    out.textContent = "…";
+    const res = await chrome.runtime.sendMessage({ type: "manualCheck", value: $("manualValue").value });
+    if (!res || !res.ok) {
+      out.textContent = t(lang, "serverDown", { error: (res && res.error) || "?" });
+      return;
+    }
+    const d = res.data;
+    const onlySite = !d.requisites.length && !(d.blacklisted_domains || []).length && !d.empty;
+    out.textContent = d.empty ? t(lang, "notRequisite") : onlySite ? t(lang, "siteClean") : globalThis.PrufI18n.describeCheck(d, lang);
+    const danger = (d.blacklisted_domains || []).length > 0 || d.requisites.some((r) => r.found);
+    out.style.color = danger ? "#b91c1c" : "";
+    out.style.fontWeight = danger ? "600" : "";
+    render();
+  });
   $("lang").addEventListener("change", async () => {
     await chrome.storage.local.set({ lang: $("lang").value });
     render();

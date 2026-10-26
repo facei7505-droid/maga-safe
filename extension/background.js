@@ -76,6 +76,18 @@ async function checkRequisites(requisites) {
   return body.data;
 }
 
+// Проверка из popup «перед переводом»: человек вставил номер или ссылку. На сервер уходят только
+// извлечённые реквизиты и ссылки, как и из плашки; сам вставленный текст остаётся в браузере.
+async function manualCheck(value) {
+  const text = typeof value === "string" ? value.slice(0, 500) : "";
+  const requisites = PrufExtract.extractRequisites(text).slice(0, 10);
+  const links = PrufExtract.extractLinks(text).slice(0, 20);
+  if (!requisites.length && !links.length) return { requisites: [], blacklisted_domains: [], empty: true };
+  const body = await api("/api/v1/inspect", { method: "POST", body: JSON.stringify({ requisites, links, cues: [] }) });
+  await bump("checked");
+  return body.data;
+}
+
 // ---------- чёрный список доменов ----------
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -164,7 +176,11 @@ function trustedSender(type, sender) {
   if (sender.id !== chrome.runtime.id) return false;
   if (!sender.tab) return !FROM_CONTENT.has(type); // popup и warning.html
   const extPage = (sender.url || "").startsWith(chrome.runtime.getURL(""));
-  if (extPage) return type === "allow" || type === "blocked"; // warning.html открыт во вкладке
+  if (extPage) {
+    // popup.html, открытый вкладкой, — те же права, что у popup; warning.html — только «перейти» и счётчик
+    if (new URL(sender.url).pathname === "/popup.html") return !FROM_CONTENT.has(type);
+    return type === "allow" || type === "blocked";
+  }
   try {
     return FROM_CONTENT.has(type) && CONTENT_HOSTS.has(new URL(sender.url).hostname);
   } catch {
@@ -178,6 +194,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     inspect: () => inspect(msg.payload),
     report: () => report(msg.payload, msg.platform),
     checkRequisites: () => checkRequisites(msg.requisites),
+    manualCheck: () => manualCheck(msg.value),
     allow: () => allowOnce(msg.domain),
     blocked: () => bump("blocked"),
     refresh: () => refreshBlacklist(),

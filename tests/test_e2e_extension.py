@@ -265,6 +265,26 @@ def test_kazakh_interface_for_banner_copy_warning_and_block_page(context) -> Non
         worker.evaluate("() => chrome.storage.local.set({lang: 'auto'})")
 
 
+def test_popup_checks_a_number_or_site_before_a_transfer(context) -> None:
+    ctx, worker = context
+    page = ctx.new_page()
+    page.goto(f"chrome-extension://{worker.url.split('/')[2]}/popup.html")
+    page.wait_for_selector("#manualValue")
+
+    page.fill("#manualValue", "https://joy-slots-kz.top/bonus")
+    page.click("#manual button[type=submit]")
+    page.locator("#manualResult", has_text="чёрном списке").wait_for(timeout=10_000)  # CSP страницы расширения не даёт eval
+
+    page.fill("#manualValue", "переведите на +7 776 902 33 18")
+    page.click("#manual button[type=submit]")
+    page.locator("#manualResult", has_text="встречался").wait_for(timeout=10_000)  # CSP страницы расширения не даёт eval
+
+    page.fill("#manualValue", "привет")
+    page.click("#manual button[type=submit]")
+    page.locator("#manualResult", has_text="Не похоже").wait_for(timeout=10_000)  # CSP страницы расширения не даёт eval
+    page.close()
+
+
 def test_shipped_manifest_asks_only_for_messengers() -> None:
     manifest = json.loads((EXTENSION / "manifest.json").read_text(encoding="utf-8"))
     assert "<all_urls>" not in manifest["host_permissions"]

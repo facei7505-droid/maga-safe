@@ -34,6 +34,12 @@
     },
     menuCheck: { ru: "Проверить в ПРУФ", kk: "ПРУФ-та тексеру" },
     notifyTitle: { ru: "ПРУФ: проверка реквизита", kk: "ПРУФ: реквизитті тексеру" },
+    siteBlack: { ru: "{value}: сайт в чёрном списке ПРУФ — казино или схема. Не вводите данные карты и не переводите деньги.",
+                 kk: "{value}: сайт ПРУФ қара тізімінде — казино немесе схема. Карта деректерін енгізбеңіз, ақша аудармаңыз." },
+    siteClean: { ru: "Сайт не в чёрном списке ПРУФ. Это не гарантия честности.", kk: "Сайт ПРУФ қара тізімінде жоқ. Бұл адалдықтың кепілі емес." },
+    manualTitle: { ru: "Проверить перед переводом", kk: "Аудармас бұрын тексеру" },
+    manualHint: { ru: "Номер карты или телефона, IBAN, ссылка Kaspi или сайт", kk: "Карта не телефон нөмірі, IBAN, Kaspi сілтемесі немесе сайт" },
+    manualButton: { ru: "Проверить", kk: "Тексеру" },
     notRequisite: { ru: "Не похоже на номер карты, телефон, IBAN или ссылку Kaspi.", kk: "Карта нөміріне, телефонға, IBAN-ға немесе Kaspi сілтемесіне ұқсамайды." },
     notFound: { ru: "{value}: в реестре ПРУФ не найден. Это не гарантия честности.", kk: "{value}: ПРУФ тізілімінде табылмады. Бұл адалдықтың кепілі емес." },
     foundBlack: { ru: "{value}: в чёрном списке ПРУФ, схему подтвердил аналитик. Не переводите деньги.", kk: "{value}: ПРУФ қара тізімінде, схеманы талдаушы растады. Ақша аудармаңыз." },
@@ -151,6 +157,8 @@
 
   /** Текст уведомления для пункта меню «Проверить в ПРУФ». */
   function describeCheck(result, lang = "ru") {
+    const badSites = result.blacklisted_domains || [];
+    if (badSites.length) return t(lang, "siteBlack", { value: badSites.join(", ") });
     const found = result.requisites.filter((r) => r.found);
     if (!result.requisites.length) return t(lang, "notRequisite");
     if (!found.length) return t(lang, "notFound", { value: result.requisites[0].value });
@@ -164,6 +172,7 @@
   function applyStatic(doc, lang) {
     doc.documentElement.lang = lang;
     doc.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(lang, el.getAttribute("data-i18n")); });
+    doc.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(lang, el.getAttribute("data-i18n-placeholder")); });
   }
 
   const api = { LANGS, STRINGS, REASONS, TRACK_TITLES, pickLang, t, localizeVerdict, copyWarning, describeCheck, applyStatic };

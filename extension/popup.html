@@ -27,6 +27,14 @@
     <div class="stat"><b id="copyWarnings">0</b><span data-i18n="statCopy">стопов при копировании</span></div>
     <div class="stat"><b id="reported">0</b><span data-i18n="statReported">жалоб отправлено</span></div>
   </div>
+  <form id="manual" autocomplete="off">
+    <label for="manualValue" data-i18n="manualTitle">Проверить перед переводом</label>
+    <div class="row" style="margin-top:4px">
+      <input id="manualValue" maxlength="500" data-i18n-placeholder="manualHint" placeholder="Номер карты или телефона, IBAN, ссылка Kaspi или сайт">
+      <button class="primary" type="submit" data-i18n="manualButton" style="flex:0 0 auto">Проверить</button>
+    </div>
+    <div id="manualResult" role="status" style="font-size:13px;margin-top:6px"></div>
+  </form>
   <div class="muted" id="blacklist">Чёрный список: ещё не загружен</div>
   <label class="inline"><input id="siteGuard" type="checkbox" style="width:auto"> <span data-i18n="siteGuard">Предупреждать на сайтах казино</span></label>
   <div class="muted" style="font-size:11px" data-i18n="siteGuardHint">Нужен доступ ко всем сайтам: расширение откроет страницу-предупреждение вместо сайта из чёрного списка. Содержимое страниц не читается.</div>
