@@ -1,0 +1,46 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Зависимости
+        run: pip install -r requirements-dev.txt
+      # E2E дашборда и расширения ищут Chromium по PRUF_E2E_CHROMIUM; гоняем их на одной версии Python
+      - name: Chromium для E2E
+        if: matrix.python == '3.12'
+        run: |
+          python -m playwright install --with-deps chromium
+          echo "PRUF_E2E_CHROMIUM=$(python -c 'from playwright.sync_api import sync_playwright as s; p = s().start(); print(p.chromium.executable_path); p.stop()')" >> "$GITHUB_ENV"
+      - name: Тесты
+        run: python -m pytest -q --cov --cov-report=term
+
+  extension:
+    name: Расширение (node --test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node --test extension/test/*.test.js
