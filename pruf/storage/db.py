@@ -238,6 +238,8 @@ class Database:
         self.on_change: Callable[[], None] | None = None  # изменились таблицы людей (pruf/storage/state.py)
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
+            # с WAL это безопасно при падении процесса и снимает fsync с каждой записи: заливка демо — ~2000 коммитов
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
             cols = {r[1] for r in self._conn.execute("PRAGMA table_info(posts)")}

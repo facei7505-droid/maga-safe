@@ -23,3 +23,15 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
     )
     base.update(overrides)
     return Settings(**base)
+
+
+def fastest(fn, repeats: int = 3) -> float:
+    """Лучшее время из нескольких прогонов: защита от ReDoS без падений из-за нагрузки на CI."""
+    import time
+
+    best = float("inf")
+    for _ in range(repeats):
+        started = time.perf_counter()
+        fn()
+        best = min(best, time.perf_counter() - started)
+    return best

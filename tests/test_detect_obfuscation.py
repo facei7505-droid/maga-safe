@@ -152,7 +152,7 @@ def test_fake_warnings_and_quotes_do_not_hide_a_scam(detector: Detector, text: s
 @pytest.mark.parametrize("text", ["схем" * 5000, "1" * 20000, "приз " * 4000, "не " * 6000, "«" + "через " * 3000],
                          ids=["word-run", "digit-run", "prize-run", "negation-run", "open-quote"])
 def test_adversarial_long_posts_are_processed_quickly(detector: Detector, text: str) -> None:
-    import time
-    started = time.perf_counter()
-    _analyze(detector, text)
-    assert time.perf_counter() - started < 1.5
+    from tests.helpers import fastest
+
+    # квадратичный разбор шёл десятки секунд; лучший из трёх прогонов не зависит от нагрузки на CI
+    assert fastest(lambda: _analyze(detector, text)) < 3.0

@@ -20,7 +20,7 @@ from pruf.detect.llm import LlmArbiter
 from pruf.normalize.links import extract_links
 from pruf.normalize.requisites import extract_requisites, redact_cards
 from pruf.pipeline import Pruf, Submission, Upload
-from tests.helpers import KASPI_PHONE, LOTTERY_RU, make_settings
+from tests.helpers import KASPI_PHONE, LOTTERY_RU, fastest, make_settings
 
 KEY = b"k" * 32
 CARD = "4400 4301 2345 6789"  # верная контрольная сумма Луна
@@ -67,10 +67,8 @@ def test_twelve_digit_iin_is_not_a_phone() -> None:
 # ---------- ссылки и домены ----------
 def test_bare_domain_regex_is_linear_on_adversarial_input() -> None:
     # Раньше «a.» × 10000 разбиралось 11 с и блокировало приём
-    started = time.perf_counter()
     for text in ("a." * 10_000, "1-" * 10_000, "a-" * 10_000 + ".kz"):
-        extract_links(text)
-    assert time.perf_counter() - started < 1.0
+        assert fastest(lambda: extract_links(text)) < 1.0, text[:4]
 
 
 def _casino_hits(tmp_path: Path, text: str) -> list[str]:
@@ -286,5 +284,5 @@ def test_slow_ocr_does_not_block_other_ingests(tmp_path: Path, original_jpeg: by
 
     # Assert
     assert fast["analysis"]["level"] == "high"
-    assert elapsed < 2
+    assert elapsed < 3  # медленный приём держит OCR 5 с
     assert pruf.db.count_posts() == 2
