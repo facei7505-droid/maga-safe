@@ -38,6 +38,7 @@ from pruf import demo_boot
 from pruf.analytics import overview
 from pruf.api.security import RateLimiter, require_analyst, require_bank, require_extension, sniff_upload
 from pruf.bot.telegram import BotLogic, HttpTelegramApi
+from pruf.bot.texts import LABELS_KK
 from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
 from pruf.graph.builder import CaseGraph, artifact_timeline
@@ -646,6 +647,12 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     @app.get("/api/v1/health")
     def health():
         return ok({"status": "ok"})
+
+    @app.get("/api/v1/i18n/kk")
+    def labels_kk():
+        # подписи признаков для казахского дашборда: те же переводы, что у бота; без токена — это не данные
+        return JSONResponse({"success": True, "data": LABELS_KK, "error": None, "meta": None},
+                            headers={"Cache-Control": "public, max-age=3600"})
 
     if WEB_DIR.exists():
         app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")

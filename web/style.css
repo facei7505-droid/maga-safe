@@ -63,7 +63,7 @@ kbd { border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 
 .tab.active svg { color: var(--accent); }
 .side-foot { margin-top: auto; display: grid; gap: 6px; padding: 0 4px; }
 .side-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-.side-foot input { width: 100%; }
+.side-foot input, .side-foot select { width: 100%; }
 .side-note { margin: 4px 0 0; font-size: 12px; color: var(--muted); line-height: 1.4; }
 .content { min-width: 0; }
 main { max-width: 1320px; margin: 0 auto; padding: 28px 32px 56px; }
@@ -327,8 +327,9 @@ img.broken { visibility: hidden; }
   .app { grid-template-columns: minmax(0, 1fr); }
   .sidebar { position: sticky; height: auto; min-width: 0; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 16px; gap: 10px; border-right: 0; border-bottom: 1px solid var(--line); }
   .brand .sub, .side-label, .side-note { display: none; }
-  .side-foot { margin: 0 0 0 auto; padding: 0; }
+  .side-foot { margin: 0 0 0 auto; padding: 0; grid-auto-flow: column; align-items: center; }
   .side-foot input { width: 150px; }
+  .side-foot select { width: auto; }
   .tabs { order: 3; flex-direction: row; width: 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .tab { width: auto; white-space: nowrap; }
   main { padding: 20px 16px 40px; }

@@ -508,5 +508,6 @@ def test_every_scheme_feature_has_a_kazakh_label() -> None:
     from pruf.bot.texts import LABELS_KK
     from pruf.detect.lexicon import FEATURES
 
-    missing = [f.id for f in FEATURES if (f.weight > 0 or f.id.endswith(".awareness")) and f.id not in LABELS_KK]
-    assert missing == [], "переведите признаки для казахского ответа бота (pruf/bot/texts.py, LABELS_KK)"
+    # все признаки, включая стоп-признаки легальности: их показывают и бот, и казахский дашборд
+    missing = [f.id for f in FEATURES if f.id not in LABELS_KK]
+    assert missing == [], "переведите признаки для казахского ответа бота и дашборда (pruf/bot/texts.py, LABELS_KK)"

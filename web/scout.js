@@ -1,5 +1,6 @@
 // ПРУФ: вкладка «Разведка» — каналы, которые агент-разведчик нашёл сам (python -m pruf.scout).
 import { $, api, badge, chips, el, showError, when } from "./lib.js";
+import { t } from "./i18n.js";
 import { networkPanel } from "./network.js";
 
 const VIA = { seed: "семя", requisite: "общий реквизит", forward: "репост", domain: "общий домен", link: "ссылка t.me",
@@ -74,7 +75,7 @@ function journalSection(run) {
   const list = el("ol", { class: "steps" });
   const status = el("span", { class: "muted small" });
   let timer = null;
-  const showAll = () => { clearInterval(timer); timer = null; list.replaceChildren(...run.steps.map(stepItem)); status.textContent = `${run.steps.length} шагов`; };
+  const showAll = () => { clearInterval(timer); timer = null; list.replaceChildren(...run.steps.map(stepItem)); status.textContent = t(`${run.steps.length} шагов`); };
   const play = () => {
     clearInterval(timer);
     list.replaceChildren();
@@ -84,7 +85,7 @@ function journalSection(run) {
       const item = stepItem(run.steps[i], i);
       list.append(item);
       item.scrollIntoView({ block: "nearest" });
-      status.textContent = `шаг ${i + 1} из ${run.steps.length}`;
+      status.textContent = t(`шаг ${i + 1} из ${run.steps.length}`);
       i += 1;
     }, STEP_DELAY_MS);
   };

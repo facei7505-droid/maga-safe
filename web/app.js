@@ -3,10 +3,11 @@
 import { graphView } from "./graph.js";
 import { networkPanel } from "./network.js";
 import {
-  $, LEVEL, REQ_TYPE, SOURCE, STATUS, TRACK, api, badge, chips, day, el, lazyImg, releaseImages, showError, toast, token, when,
+  $, LEVEL, REQ_TYPE, SOURCE, STATUS, TRACK, api, badge, chips, day, el, lazyImg, raw, releaseImages, showError, toast, token, when,
 } from "./lib.js";
 import { loadOverview } from "./overview.js";
 import { loadScout } from "./scout.js";
+import { featureLabel, initI18n, lang, setLang, t } from "./i18n.js";
 import { initTour } from "./tour.js";
 
 const POSTS_PAGE = 12;
@@ -32,7 +33,7 @@ async function loadStats() {
     $("#demo-note").classList.toggle("hidden", !data.demo_posts);
     const banner = $("#degraded");
     if (off.length) {
-      banner.textContent = "Работает не всё: " + off.join(", ") + ". Анализ идёт по остальным признакам.";
+      banner.textContent = t("Работает не всё: " + off.join(", ") + ". Анализ идёт по остальным признакам.");
       banner.classList.remove("hidden");
     } else banner.classList.add("hidden");
   } catch (err) {
@@ -51,7 +52,7 @@ async function loadCases() {
   try {
     const { data, meta } = await api("/api/v1/cases?" + params);
     state.cases = data;
-    $("#cases-total").textContent = `Кейсов: ${meta.total}`;
+    $("#cases-total").textContent = t(`Кейсов: ${meta.total}`);
     renderQueue();
   } catch (err) {
     showError(list, err);
@@ -123,7 +124,7 @@ function statusControls(c, d) {
   const note = el("input", { placeholder: "Заметка аналитика", value: d.status.note || "", maxlength: 1000 });
   const save = el("button", { onclick: async () => {
     const n = d.money_requisites || 0;
-    if (statusSel.value === "confirmed" && n && !confirm(`${n} реквизит(ов) кейса уйдут в чёрный список: банки увидят совет приостановить перевод. Подтвердить?`)) return;
+    if (statusSel.value === "confirmed" && n && !confirm(t(`${n} реквизит(ов) кейса уйдут в чёрный список: банки увидят совет приостановить перевод. Подтвердить?`))) return;
     try {
       const { data } = await api("/api/v1/cases/" + encodeURIComponent(c.key), {
         method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -240,12 +241,12 @@ function highlighted(text, evidence, source) {
   let pos = 0;
   for (const sp of spans) {
     if (sp.s < pos) continue;
-    if (sp.s > pos) out.push(text.slice(pos, sp.s));
+    if (sp.s > pos) out.push(raw(text.slice(pos, sp.s)));
     const cls = sp.ev.stop ? "hl stop" : "hl";
-    out.push(el("mark", { class: cls, title: `${sp.ev.label}${sp.ev.weight ? ` (${sp.ev.weight > 0 ? "+" : ""}${sp.ev.weight})` : ""}` }, text.slice(sp.s, sp.e)));
+    out.push(el("mark", { class: cls, title: `${featureLabel(sp.ev)}${sp.ev.weight ? ` (${sp.ev.weight > 0 ? "+" : ""}${sp.ev.weight})` : ""}` }, raw(text.slice(sp.s, sp.e))));
     pos = sp.e;
   }
-  out.push(text.slice(pos));
+  out.push(raw(text.slice(pos)));
   return el("div", { class: "text" }, out);
 }
 
@@ -264,8 +265,8 @@ function evidenceLine(e) {
   const cls = e.stop ? "stop" : e.source === "registry" || e.source === "graph" ? "ctx" : e.weight > 0 ? "pos" : "";
   const w = e.weight ? ` (${e.weight > 0 ? "+" : ""}${e.weight})` : "";
   return el("div", { class: "ev " + cls },
-    el("span", {}, e.label + w), el("span", { class: "src" }, SOURCE[e.source] || e.source),
-    (e.quotes || (e.quote ? [e.quote] : [])).map((q) => el("q", {}, q)));
+    el("span", {}, featureLabel(e) + w), el("span", { class: "src" }, SOURCE[e.source] || e.source),
+    (e.quotes || (e.quote ? [e.quote] : [])).map((q) => el("q", {}, raw(q))));
 }
 
 function renderPost(p) {
@@ -282,7 +283,7 @@ function renderPost(p) {
     el("button", { class: "mini-thumb", onclick: () => openTimeline(art.id), title: "Таймлайн пруфа" }, lazyImg(art.id, "скрин")));
   return el("div", { class: "post", "data-post": p.id },
     el("div", {}, el("b", {}, `#${p.id}`), " ", badge(p.level, p.score), " ", el("span", { class: "muted" }, `${p.channel || "—"} · ${when(p.posted_at)}`)),
-    a.summary ? el("div", { class: "summary" }, a.summary) : null,
+    a.summary ? el("div", { class: "summary" }, summaryText(a)) : null,
     p.text ? highlighted(p.text, a.evidence, "text") : null,
     thumbs.length ? el("div", { class: "mini-thumbs" }, thumbs) : null,
     p.ocr_text ? el("details", {}, el("summary", {}, "Текст со скриншота (OCR)"), highlighted(p.ocr_text, a.evidence, "ocr")) : null,
@@ -405,6 +406,21 @@ function plural(n, one, few, many) {
 }
 const SOURCES_READ = { text: "текст", ocr: "текст со скрина (OCR)", qr: "QR-код", voice: "голосовое" };
 
+// Сводку пишет сервер по-русски (pruf/scoring.py, summarize); на казахском собираем её так же из переведённых признаков
+function summaryText(a) {
+  if (lang !== "kk") return a.summary;
+  const labels = (list) => [...new Set(list.map(featureLabel))].map(t);
+  const legit = labels(a.evidence.filter((e) => e.stop));
+  const top = a.tracks.slice().sort((x, y) => y.score - x.score)[0];
+  const capped = top && top.capped_reason ? " Балл шектелді." : "";
+  if (!a.track || a.level === "low") {
+    return "Схеманың елеулі белгілері табылмады." + (legit.length ? ` Заңдылық белгілері: ${legit.join("; ")}.` : "") + capped;
+  }
+  const found = labels(a.evidence.filter((e) => (e.weight > 0 || e.source === "ml") && [a.track, "common"].includes(e.track)));
+  return `Табылған белгілер: ${t(TRACK[a.track]).toLowerCase()}. ${found.join("; ") || "тек жанама белгілер"}.`
+    + (legit.length ? ` Заңдылық белгілері де бар: ${legit.join("; ")}.` : "") + capped + " Шешімді талдаушы қабылдайды.";
+}
+
 function decisionTrace(a) {
   const positive = a.evidence.filter((e) => e.weight > 0 && !["ml", "llm", "registry", "graph"].includes(e.source));
   const stops = a.evidence.filter((e) => e.stop);
@@ -414,7 +430,7 @@ function decisionTrace(a) {
   const ml = a.tracks.filter((t) => t.ml_probability != null).sort((x, y) => y.ml_probability - x.ml_probability)[0];
   const top = a.tracks.slice().sort((x, y) => y.score - x.score)[0];
   const [llmTitle, llmNote] = LLM_STATUS[a.llm_status] || [a.llm_status, ""];
-  const uniq = (list) => [...new Set(list.map((e) => e.label))];
+  const uniq = (list) => [...new Set(list.map(featureLabel))];
   const steps = [
     ["Прочитал", read.length ? read.join(", ") : "текст", "всё приведено к одному виду: транслит, казахские буквы, «к@зино» → «казино»"],
     ["Правила словаря", positive.length ? plural(uniq(positive).length, "признак", "признака", "признаков") + " схемы" : "признаков схемы нет",
@@ -432,7 +448,7 @@ function decisionTrace(a) {
     el("summary", {}, el("b", {}, "Как решала система")),
     el("ol", { class: "steps" }, steps.map(([name, value, note], i) =>
       el("li", { class: "step" + (i === steps.length - 1 ? " step-stop" : "") }, el("span", { class: "step-n" }, i + 1),
-        el("div", {}, el("b", {}, name + ": "), value, note ? el("div", { class: "muted small" }, note) : null)))));
+        el("div", {}, el("b", {}, name, ": "), value, note ? el("div", { class: "muted small" }, note) : null)))));
 }
 
 function renderCheck(data, text) {
@@ -445,7 +461,7 @@ function renderCheck(data, text) {
     p.matches.flatMap((m) => m.changes.filter((c) => c.kind === "amount" || c.kind === "date")).slice(0, 5).map((c) => el("div", { class: "diff" }, `${c.before} → ${c.after}`))));
   $("#check-result").replaceChildren(
     el("div", { class: "check-head" }, gauge(a.score, a.level),
-      el("div", {}, el("h2", {}, "Риск ", badge(a.level, a.score), a.track ? el("span", {}, " ", chips([a.track])) : null), el("p", {}, a.summary))),
+      el("div", {}, el("h2", {}, "Риск ", badge(a.level, a.score), a.track ? el("span", {}, " ", chips([a.track])) : null), el("p", {}, summaryText(a)))),
     (a.degraded || []).map((d) => el("div", { class: "banner" }, d.reason)),
     decisionTrace(a),
     text ? el("div", {}, el("h3", {}, "Где найдены признаки"), highlighted(text, a.evidence, "text")) : null,
@@ -475,7 +491,7 @@ async function loadBankOutcomes() {
   const tbody = $("#bank-outcome-rows");
   try {
     const { data, meta } = await api("/api/v1/bank/feedback?limit=200");
-    $("#bank-outcomes-total").textContent = `реквизитов: ${meta.total}`;
+    $("#bank-outcomes-total").textContent = t(`реквизитов: ${meta.total}`);
     tbody.replaceChildren(...(data.length ? data.map((r) => el("tr", {},
       el("td", {}, el("span", { class: "req-type" }, REQ_TYPE[r.type] || r.type)), el("td", { class: "mono" }, r.value),
       el("td", {}, r.fraud_confirmed ? el("b", { class: "err" }, r.fraud_confirmed) : el("span", { class: "muted" }, "0")),
@@ -493,7 +509,7 @@ async function loadReports() {
   const tbody = $("#report-rows");
   try {
     const { data, meta } = await api("/api/v1/reports?limit=100");
-    $("#reports-total").textContent = `всего жалоб: ${meta.total}`;
+    $("#reports-total").textContent = t(`всего жалоб: ${meta.total}`);
     tbody.replaceChildren(...(data.length ? data.map((r) => el("tr", {},
       el("td", {}, el("span", { class: "req-type" }, REQ_TYPE[r.type] || r.type)), el("td", { class: "mono" }, r.value),
       el("td", {}, el("b", {}, r.reporters)), el("td", {}, r.trusted_reporters ? el("b", { class: "trusted" }, r.trusted_reporters) : el("span", { class: "muted" }, "0")),
@@ -509,9 +525,9 @@ async function loadDisputes() {
   const tbody = $("#dispute-rows");
   try {
     const { data, meta } = await api("/api/v1/bot/feedback?days=30");
-    $("#disputes-total").textContent = `всего отметок: ${meta.total}`;
+    $("#disputes-total").textContent = t(`всего отметок: ${meta.total}`);
     tbody.replaceChildren(...(data.length ? data.map((r) => el("tr", {},
-      el("td", {}, r.label), el("td", { class: "mono" }, r.feature_id), el("td", {}, el("b", {}, r.reporters)), el("td", {}, r.disputes),
+      el("td", {}, featureLabel(r)), el("td", { class: "mono" }, r.feature_id), el("td", {}, el("b", {}, r.reporters)), el("td", {}, r.disputes),
       el("td", {}, r.shown), el("td", {}, el("b", { class: r.rate >= 0.2 && r.reporters >= 2 ? "err" : "" }, Math.round(r.rate * 100) + "%")),
       el("td", {}, day(r.last))))
       : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Отметок пока нет"))]));
@@ -586,7 +602,10 @@ function onKey(e) {
   if (e.key === "/") { e.preventDefault(); switchView("queue"); $("#f-search").focus(); }
 }
 
-function init() {
+async function init() {
+  await initI18n();
+  $("#lang").value = lang;
+  $("#lang").addEventListener("change", (e) => setLang(e.target.value));
   $("#token").value = token();
   $("#token").addEventListener("change", (e) => {
     try { sessionStorage.setItem("pruf_token", e.target.value.trim()); } catch { /* приватный режим */ }

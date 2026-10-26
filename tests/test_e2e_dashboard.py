@@ -157,3 +157,41 @@ def test_demo_tour_walks_every_step_without_errors(server: str, browser) -> None
     assert page.locator(".tour").is_hidden()
     assert errors == []
     page.close()
+
+
+def test_kazakh_dashboard_translates_interface_but_not_posts(server: str, browser) -> None:
+    # Arrange: язык выбран в боковой панели и запомнен
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(server, wait_until="networkidle")
+
+    # Act
+    with page.expect_navigation():
+        page.select_option("#lang", "kk")
+    page.wait_for_load_state("networkidle")
+
+    # Assert: меню, обзор и карточка качества на казахском
+    assert page.evaluate("document.documentElement.lang") == "kk"
+    assert page.locator(".tab[data-view='overview']").inner_text().strip() == "Шолу"
+    assert "100 схеманың ішінен 83 табады" in page.locator(".quality").inner_text()
+    assert "Сапаны қалай өлшедік" in page.locator(".quality h3").inner_text()
+
+    # проверка поста: ход решения переведён, текст поста и цитаты — как есть
+    page.locator(".tab[data-view='check']").click()
+    text = LOTTERY_RU.format(phone=KASPI_PHONE)
+    page.fill("#check-text", text)
+    page.locator("#check-form button[type=submit]").click()
+    page.wait_for_selector(".trace")
+    assert "Жүйе қалай шешті" in page.locator(".trace summary").inner_text()
+    assert "Сөздік ережелері" in page.locator(".trace").inner_text()
+    assert page.locator("#check-result .text").first.inner_text() == text
+    assert page.locator("#lang").input_value() == "kk"
+    assert errors == []
+
+    # обратно на русский
+    with page.expect_navigation():
+        page.select_option("#lang", "ru")
+    page.wait_for_load_state("networkidle")
+    assert page.locator(".tab[data-view='overview']").inner_text().strip() == "Обзор"
+    page.close()

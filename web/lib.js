@@ -1,4 +1,5 @@
 // ПРУФ: общие помощники дашборда. Весь текст из постов выводится только через textContent.
+import { t } from "./i18n.js";
 
 export const TRACK = { lottery: "Розыгрыши", casino: "Казино", pyramid: "Пирамиды" };
 export const LEVEL = { high: "высокий", medium: "средний", low: "низкий" };
@@ -16,6 +17,9 @@ export function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+// Текст поста, цитата, OCR: готовый текстовый узел, перевод интерфейса его никогда не трогает.
+export const raw = (text) => document.createTextNode(String(text ?? ""));
+
 export function svgEl(tag, attrs = {}, ...children) {
   const node = document.createElementNS(NS, tag);
   setAttrs(node, attrs);
@@ -23,19 +27,21 @@ export function svgEl(tag, attrs = {}, ...children) {
   return node;
 }
 
+const TRANSLATED_ATTRS = new Set(["title", "placeholder", "aria-label"]);
+
 function setAttrs(node, attrs) {
   for (const [k, v] of Object.entries(attrs)) {
     if (v === undefined || v === null || v === false) continue;
     if (k === "class") node.setAttribute("class", v);
     else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
+    else node.setAttribute(k, TRANSLATED_ATTRS.has(k) ? t(String(v)) : v);
   }
 }
 
 function appendAll(node, children) {
   for (const c of children.flat(Infinity)) {
     if (c === null || c === undefined || c === false) continue;
-    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    node.append(c instanceof Node ? c : document.createTextNode(t(String(c))));
   }
 }
 
