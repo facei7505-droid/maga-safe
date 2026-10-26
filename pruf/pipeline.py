@@ -5,14 +5,18 @@ from __future__ import annotations
 import logging
 import threading
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
+
+from PIL import Image
 
 from pruf.config import Settings
 from pruf.detect.detector import Detector, SourceText
 from pruf.models import Evidence
 from pruf.normalize.audio import transcribe
 from pruf.normalize.links import ALLOWLIST_DOMAINS, Link
+from pruf.normalize.qr import decode_qr
 from pruf.normalize.requisites import redact_cards
 from pruf.normalize.text import normalize_text
 from pruf.registry.hashing import open_image
@@ -97,6 +101,15 @@ class Pruf:
             return [{"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"}]
         return []
 
+    def _read_qr(self, images: Iterable[Image.Image]) -> list[str]:
+        """Содержимое QR-кодов со всех картинок поста, без повторов. Медленное: зовётся вне общей блокировки."""
+        if not self.settings.qr_enabled:
+            return []
+        out: list[str] = []
+        for img in images:
+            out.extend(p for p in decode_qr(img) if p not in out)
+        return out
+
     # ---------- контекст из реестра и графа ----------
     def _proof_context(self, got: _Collected) -> list[Evidence]:
         out: list[Evidence] = []
@@ -160,13 +173,14 @@ class Pruf:
         # Медленное (OCR, Whisper, LLM) идёт вне общей блокировки: под ней только запись в реестр
         # и чтение контекста, поэтому параллельные загрузки не выстраиваются в очередь за OCR.
         ocr = [self.registry.read_ocr(img) for _, img in images]
+        qr = self._read_qr(img for _, img in images)
         transcript, voice_failed = self._transcribe(sub)
         with self._ingest_lock:
             post_id = self.db.create_post(source=sub.source, channel=sub.channel, author=sub.author,
                                           posted_at=sub.posted_at, text=redact_cards(sub.text),
                                           external_id=sub.external_id, label=sub.label)
         try:
-            return self._process(post_id, sub, images, ocr, transcript, voice_failed, allow_llm)
+            return self._process(post_id, sub, images, ocr, transcript, voice_failed, allow_llm, qr)
         except Exception as exc:
             self.db.mark_post_failed(post_id, type(exc).__name__)
             raise
@@ -181,7 +195,7 @@ class Pruf:
         return transcript, transcript is None
 
     def _process(self, post_id: int, sub: Submission, images: list, ocr: list, transcript: str | None,
-                 voice_failed: bool, allow_llm: bool = True) -> dict[str, Any]:
+                 voice_failed: bool, allow_llm: bool = True, qr: list[str] | None = None) -> dict[str, Any]:
         got = _Collected()
         degraded: list[dict[str, str]] = []
         if voice_failed:
@@ -199,7 +213,8 @@ class Pruf:
                 if text_res:
                     got.texts.append(text_res)
             ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
-            sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""), SourceText("voice", transcript or "")]
+            sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""),
+                       SourceText("qr", "\n".join(qr or ())), SourceText("voice", transcript or "")]
             first = self.detector.detect(sources, allow_llm=False)
             for r in first.requisites:
                 self.db.link_requisite(post_id, r.kind, r.key, r.display)
@@ -245,7 +260,9 @@ class Pruf:
         degraded = []
         degraded.extend(self._ocr_degraded(got))
         ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or ""
-        sources = [SourceText("text", text or ""), SourceText("ocr", ocr_text), SourceText("voice", transcript or "")]
+        qr = self._read_qr(img for _, img in decoded)
+        sources = [SourceText("text", text or ""), SourceText("ocr", ocr_text), SourceText("qr", "\n".join(qr)),
+                   SourceText("voice", transcript or "")]
         first = self.detector.detect(sources, allow_llm=False)
         context = self._proof_context(got)
         # Анонимный бот не отвечает «есть ли этот номер в базе» на голый реквизит: иначе мошенник

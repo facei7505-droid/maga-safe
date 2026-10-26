@@ -27,7 +27,7 @@ class Evidence:
     track: str
     label: str
     weight: float
-    source: str  # text | ocr | voice | link | registry | graph | ml | llm
+    source: str  # text | ocr | qr | voice | link | registry | graph | ml | llm
     quote: str = ""
     span: tuple[int, int] | None = None
     stop: bool = False
