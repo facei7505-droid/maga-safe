@@ -58,7 +58,7 @@ def _host(url: str) -> str:
 
 @dataclass(frozen=True)
 class SourceText:
-    source: str  # text | ocr | voice
+    source: str  # text | ocr | qr | voice
     text: str
 
 
@@ -138,6 +138,10 @@ class Detector:
             src_reqs = extract_requisites(src.text, self._hmac_key)
             found_links = extract_links(norm.original)
             evidence.extend(find_features(norm, src.source, keep_quoted=bool(src_reqs or found_links)))
+            if src.source == "qr":
+                # сам QR не признак схемы (им платят и в кафе), но аналитик должен видеть, что ссылка была спрятана в картинке
+                evidence.extend(Evidence("common.qr_code", "common", "QR-код на изображении", 0, "qr", line[:200])
+                                for line in src.text.splitlines() if line.strip())
             for req in src_reqs:
                 if req.key not in req_keys:
                     req_keys.add(req.key)

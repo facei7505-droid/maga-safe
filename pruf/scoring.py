@@ -57,7 +57,8 @@ AWARENESS_SUFFIX = ".awareness"
 NEWS_WARNING = "common.news.awareness"
 QUESTION_WARNING = "common.question.awareness"
 QUESTION_FINAL = "common.question_final"
-SHARED_WARNINGS = frozenset({"common.awareness", NEWS_WARNING, QUESTION_WARNING})  # на все треки; «рейд», «подпольн» — только казино
+VICTIM_WARNING = "common.victim.awareness"  # «я не платила и заблокировала номер»: пересказ схемы пострадавшим
+SHARED_WARNINGS = frozenset({"common.awareness", NEWS_WARNING, QUESTION_WARNING, VICTIM_WARNING})  # на все треки; «рейд», «подпольн» — только казино
 # Реквизит или ссылка: у настоящей рекламы схемы есть куда платить или переходить, у новости и предупреждения обычно нет
 CONTACT_EVIDENCE = frozenset({"common.requisite", "common.kaspi_pay_link", "common.shortener", "common.brand_lookalike", "casino.domain",
                               "common.ref_bot_link"})
@@ -94,6 +95,8 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     is_news = sum(1 for e in evidence if e.feature_id == NEWS_WARNING) >= 2
     # «друг зовёт: вход 50 000, 15 000 в месяц, бонус за друга. Это пирамида?» — вопрос в конце пересказывает всё предложение
     is_question = any(e.feature_id == QUESTION_FINAL for e in evidence)
+    # пострадавший пересказывает всю схему, как и вопрос в конце: «пишут, что я выиграла, просят оплатить налог»
+    is_victim = any(e.feature_id == VICTIM_WARNING for e in evidence)
     if warning and not any(f.endswith(AWARENESS_SUFFIX) for f in own):
         own[f"{track}{AWARENESS_SUFFIX}"] = warning
     common = _unique_by_feature(e for e in evidence if e.track == "common" and not e.stop)
@@ -105,9 +108,13 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     # «Осторожно, мошенники!» рядом с реквизитом или просьбой заплатить — маскировка, а не предупреждение:
     # баллы оно не снимает, остаётся только потолок «средний»
     disguise = has_transfer or has_contact or DENIAL in common or AUTHOR_ASK in common
+    if is_victim:
+        # в рассказе пострадавшего «оплатите доставку» и «переведите на карту» — цитата мошенника;
+        # маскировкой остаются только реквизит или ссылка в самом посте и «мы работаем честно»
+        disguise = hard_contact or DENIAL in common
     # «Итоги тиража» рядом с реквизитом или просьбой заплатить баллы тоже не снимают; потолок «средний» остаётся.
     # «Запись в лс» у турнира — не маскировка: мягкий призыв снимает только скидку предупреждения.
-    unmasked = has_transfer or hard_contact
+    unmasked = (has_transfer and not is_victim) or hard_contact
     points = sum(e.weight for e in own.values()
                  if not e.stop or not (unmasked or (disguise and e.feature_id.endswith(AWARENESS_SUFFIX))))
     if has_positive:
@@ -149,7 +156,7 @@ def score_track(track: str, evidence: list[Evidence], ml: Mapping[str, float] | 
     core_count = sum(1 for e in own.values() if e.core)
     if score >= HIGH_THRESHOLD and not (core_count >= 2 or (core_count >= 1 and (has_transfer or track_context))):
         score, capped = NO_COMBO_CAP, "нет обязательного сочетания признаков для высокого риска"
-    if warning and not disguise and (is_news or is_question or core_count < 2) and score > SINGLE_CAP:
+    if warning and not disguise and (is_news or is_question or is_victim or core_count < 2) and score > SINGLE_CAP:
         score, capped = SINGLE_CAP, "похоже на предупреждение или новость о схеме"
     elif (any(e.feature_id == LLM_LEGIT for e in evidence) and score > SINGLE_CAP
           and not (has_transfer or has_contact or hard_contact or ml_confirms or track_context)):

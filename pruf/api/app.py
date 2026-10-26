@@ -14,6 +14,7 @@ import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ from pruf.inspect import REPORT_PLATFORMS, Inspector
 from pruf.lists import apply_case_decision, case_money_keys, export_ref, list_info, mask, to_csv
 from pruf.normalize.audio import transcribe, whisper_available
 from pruf.normalize.ocr import ocr_available
+from pruf.normalize.qr import qr_available
 from pruf.normalize.requisites import extract_requisites
 from pruf.pipeline import Pruf, Submission, Upload
 from pruf.registry.forensics import ela_heatmap_png
@@ -79,7 +81,8 @@ class RequisiteCheck(BaseModel):
 
 def capabilities(p: Pruf) -> dict[str, Any]:
     """Что реально работает: аналитик видит, если OCR, Whisper, ML или LLM недоступны."""
-    return {"ocr": p.settings.ocr_enabled and ocr_available(), "ocr_off": not p.settings.ocr_enabled, "whisper": whisper_available(), "ml": p.detector.has_classifier,
+    return {"ocr": p.settings.ocr_enabled and ocr_available(), "ocr_off": not p.settings.ocr_enabled, "whisper": whisper_available(), "qr": p.settings.qr_enabled and qr_available(),
+            "ml": p.detector.has_classifier,
             "llm": p.detector.llm_state(), "link_resolution": p.settings.resolve_links}
 
 
@@ -501,6 +504,13 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         return ok(domains, total=len(domains), version=core().version)
 
     # ---------- разведчик ----------
+    @app.get("/api/v1/bot/feedback")
+    def bot_feedback(days: int = Query(default=30, ge=1, le=365), actor: str = Depends(analyst)):
+        """Признаки, которые пользователи бота оспорили кнопкой «Это не мошенничество»: очередь на ревью словаря."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+        db = core().db
+        return ok(db.disputed_features(since), total=db.bot_feedback_count(), days=days)
+
     @app.get("/api/v1/scout")
     def scout_view(actor: str = Depends(analyst)):
         """Каналы и связи, найденные разведчиком (python -m pruf.scout)."""

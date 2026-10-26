@@ -460,7 +460,7 @@ def test_stats_report_capabilities(dev: TestClient) -> None:
     # Assert
     assert data["posts"] == 1 and data["levels"] == {"high": 1}
     assert data["cases"] == 1 and data["texts_indexed"] == 1
-    assert set(data["capabilities"]) == {"ocr", "ocr_off", "whisper", "ml", "llm", "link_resolution"}
+    assert set(data["capabilities"]) == {"ocr", "ocr_off", "whisper", "qr", "ml", "llm", "link_resolution"}
     assert data["capabilities"]["ml"] is False and data["capabilities"]["link_resolution"] is False
 
 

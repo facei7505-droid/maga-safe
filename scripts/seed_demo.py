@@ -172,6 +172,46 @@ def seed_trusted_history(pruf: Pruf) -> int:
     return n
 
 
+class _SilentTelegram:
+    """Заглушка Bot API для демо: ответы бота никуда не отправляются, нужна только кнопка под ответом."""
+
+    def __init__(self) -> None:
+        self.buttons: list[list[tuple[str, str]] | None] = []
+
+    def send_message(self, chat_id, text, reply_to=None, buttons=None) -> None:
+        self.buttons.append(buttons)
+
+    def answer_callback(self, callback_id, text) -> None:
+        pass
+
+    def clear_buttons(self, chat_id, message_id) -> None:
+        pass
+
+
+# Кто сколько раз переслал пост боту и сколько из них нажали «Это не мошенничество»: честный розыгрыш
+# оспаривают почти все, скам-розыгрыш почти никто. Так на демо видно, какие признаки стоит пересмотреть.
+DEMO_BOT_CHECKS = ((HONEST_GIVEAWAY[1], 6, 4), ("🎁 РОЗЫГРЫШ iPhone 15 Pro! Участие всего 2000 тг, "
+                    "переводите на Kaspi 8 701 999 88 77. Итоги в пятницу, осталось 5 мест!", 9, 1))
+
+
+def seed_bot_feedback(pruf: Pruf) -> int:
+    from pruf.bot.telegram import BotLogic
+
+    api = _SilentTelegram()
+    bot = BotLogic(pruf, api, pruf.settings.max_upload_bytes)
+    uid = 0
+    for text, asked, disputed in DEMO_BOT_CHECKS:
+        for user in range(asked):
+            uid += 1
+            bot.handle({"update_id": uid, "message": {"message_id": 1, "chat": {"id": 9000 + user, "type": "private"}, "text": text}})
+            buttons = api.buttons[-1]
+            if buttons and user < disputed:
+                bot.handle({"update_id": 10_000 + uid, "callback_query": {
+                    "id": str(uid), "from": {"id": 9000 + user}, "data": buttons[0][1],
+                    "message": {"message_id": 2, "chat": {"id": 9000 + user, "type": "private"}}}})
+    return pruf.db.bot_feedback_count()
+
+
 def seed_decisions(pruf: Pruf) -> dict[str, int]:
     """Решения аналитика для демо: кейс оператора подтверждён, честный розыгрыш отклонён."""
     channel, text = HONEST_GIVEAWAY
@@ -225,6 +265,7 @@ def main() -> None:
     _log(f"жалобы из расширения: {seed_reports(pruf)}")
     _log(f"списки: {seed_decisions(pruf)} (confirmed → чёрный, dismissed → снят)")
     _log(f"история проверенных жалобщиков: {seed_trusted_history(pruf)} жалоб")
+    _log(f"отметки «Это не мошенничество» из бота: {seed_bot_feedback(pruf)}")
     hero = pruf.db.find_post_by_external_id("hero00")
     if hero:
         arts = pruf.db.artifacts_for_post(hero["id"])

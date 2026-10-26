@@ -267,3 +267,39 @@ def test_reports_api_exposes_trust_and_public_verdict_ignores_reports(dev: TestC
     row = dev.get("/api/v1/reports").json()["data"][0]
     assert row["trusted_reporters"] == 0 and row["trust"] == 0.5 and row["reporters"] == 5
     assert _inspect(dev)["score"] == before["score"]
+
+
+HONEST = ("🎁 РОЗЫГРЫШ от магазина «Дала Текстиль»! Разыгрываем 3 сертификата по 20 000 ₸. Условия: подписка и репост. "
+          "Итоги 5 ноября в прямом эфире. Доставка приза бесплатно. Вопросы: +7 702 640 18 33")
+
+
+def _requisite_signals(result: dict) -> list[str]:
+    return [e["feature_id"] for e in result["analysis"]["evidence"] if e["feature_id"].startswith("graph.requisite.")]
+
+
+def test_dismissed_case_stops_flagging_its_number_until_new_risky_posts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: честный розыгрыш получил средний риск, его номер засвечен самим этим постом
+    core = Pruf(make_settings(tmp_path), ocr_enabled=False)
+    honest = core.ingest(_sub(HONEST), allow_llm=False)
+    assert honest["analysis"]["level"] in ("medium", "high")
+    assert _requisite_signals(core.check(HONEST, public=True)) == ["graph.requisite.phone"]
+
+    # Act: аналитик отклонил кейс
+    apply_case_decision(core.db, "C-1", [honest["post_id"]], "dismissed", "a", ["C-1"])
+    after_dismiss = core.check(HONEST, public=True)
+
+    # ...а позже тот же номер появился в новом скам-посте
+    monkeypatch.setattr("pruf.storage.db.utcnow", lambda: "2999-01-01T00:00:00+00:00")
+    core.ingest(_sub(LOTTERY_RU.format(phone="+7 702 640 18 33")), allow_llm=False)
+    after_new_scam = core.check(HONEST, public=True)
+
+    # Assert
+    assert _requisite_signals(after_dismiss) == []
+    assert _requisite_signals(after_new_scam) == ["graph.requisite.phone"]
+    core.db.close()
+
+
+def _sub(text: str):
+    from pruf.pipeline import Submission
+
+    return Submission(text=text, source="test", channel="@shop")
