@@ -59,7 +59,8 @@ QUESTION_WARNING = "common.question.awareness"
 QUESTION_FINAL = "common.question_final"
 SHARED_WARNINGS = frozenset({"common.awareness", NEWS_WARNING, QUESTION_WARNING})  # на все треки; «рейд», «подпольн» — только казино
 # Реквизит или ссылка: у настоящей рекламы схемы есть куда платить или переходить, у новости и предупреждения обычно нет
-CONTACT_EVIDENCE = frozenset({"common.requisite", "common.kaspi_pay_link", "common.shortener", "common.brand_lookalike", "casino.domain"})
+CONTACT_EVIDENCE = frozenset({"common.requisite", "common.kaspi_pay_link", "common.shortener", "common.brand_lookalike", "casino.domain",
+                              "common.ref_bot_link"})
 # «Пиши в лс», «ссылка в шапке» — призыв к действию в рекламе, но в новости это описание схемы
 SOFT_CONTACT = frozenset({"common.dm_redirect", "casino.hidden_promo"})
 # Вспомогательные признаки сами трек не открывают: «3,5 млн» в сборе на операцию — не розыгрыш
