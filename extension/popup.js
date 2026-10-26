@@ -30,7 +30,8 @@
 
   $("save").addEventListener("click", async () => {
     const apiUrl = $("apiUrl").value.trim();
-    if (!/^https?:\/\/[^\s/]+/.test(apiUrl)) {
+    // токен уходит в заголовке: по http только на свой компьютер, иначе его видит любой в сети
+    if (!/^https:\/\/[^\s/]+/.test(apiUrl) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(apiUrl)) {
       $("status").textContent = t(lang, "badUrl");
       return;
     }

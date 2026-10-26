@@ -111,7 +111,11 @@ def restore(db: Database, snapshot: dict[str, Any]) -> dict[str, int]:
             rows = tables.get(table) or []
             cols = {r[1] for r in db._conn.execute(f"PRAGMA table_info({table})")}
             for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError(f"{table}: строка снимка не объект")
                 keep = [c for c in row if c in cols]
+                if not keep:
+                    continue
                 db._conn.execute(f"INSERT OR REPLACE INTO {table} ({', '.join(keep)}) VALUES ({', '.join('?' * len(keep))})",
                                  [row[c] for c in keep])
             counts[table] = len(rows)
@@ -140,11 +144,17 @@ class StateKeeper:
             self.last_error = f"снимок не прочитан, сохранение выключено: {type(exc).__name__}: {exc}"[:200]
             log.error("%s (%s)", self.last_error, self._backend.name)
             return None
-        self._can_save = True
         if not snapshot:
+            self._can_save = True
             log.info("снимка состояния нет (%s): начинаем с демо-данных", self._backend.name)
             return None
-        counts = restore(self._db, snapshot)
+        try:
+            counts = restore(self._db, snapshot)
+        except Exception as exc:  # noqa: BLE001 — битый снимок не должен ронять сервер; сам снимок не затираем
+            self.last_error = f"снимок не восстановлен, сохранение выключено: {type(exc).__name__}: {exc}"[:200]
+            log.error("%s (%s)", self.last_error, self._backend.name)
+            return None
+        self._can_save = True
         log.info("состояние восстановлено из %s: %s", self._backend.name, counts)
         return counts
 

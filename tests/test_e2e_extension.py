@@ -311,3 +311,26 @@ def test_shipped_extension_blocks_nothing_by_default(pw, server: str, tmp_path_f
         assert page.locator("#siteGuard").is_checked() is False
     finally:
         ctx.close()
+
+
+def test_popup_refuses_plain_http_to_a_remote_server(pw, tmp_path_factory) -> None:
+    # Arrange: токен уходит в заголовке; по http его видит любой в сети, кроме своего компьютера
+    ctx = pw.chromium.launch_persistent_context(
+        str(tmp_path_factory.mktemp("profile-http")), executable_path=CHROMIUM, headless=True,
+        args=[f"--disable-extensions-except={EXTENSION}", f"--load-extension={EXTENSION}"])
+    try:
+        worker = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=10_000)
+        page = ctx.new_page()
+        page.goto(f"chrome-extension://{worker.url.split('/')[2]}/popup.html")
+
+        # Act
+        page.click("details summary")
+        page.fill("#apiUrl", "http://pruf.example.kz")
+        page.fill("#token", "secret-token")
+        page.click("#save")
+
+        # Assert
+        page.locator("#status", has_text="https://").wait_for(timeout=5_000)
+        assert worker.evaluate("() => chrome.storage.local.get('token')").get("token") != "secret-token"
+    finally:
+        ctx.close()

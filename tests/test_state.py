@@ -79,6 +79,29 @@ def test_unreadable_store_never_overwrites_the_snapshot(tmp_path: Path) -> None:
     core.db.close()
 
 
+@pytest.mark.parametrize("rows", ['["not a row"]', '[{"case_key": {"nested": 1}, "status": "new"}]'],
+                         ids=["row-not-object", "unbindable-value"])
+def test_broken_snapshot_neither_crashes_startup_nor_gets_overwritten(tmp_path: Path, rows: str) -> None:
+    # Arrange: снимок испорчен (обрезан, правлен руками)
+    target = tmp_path / "state.json"
+    target.write_text('{"version": 1, "tables": {"case_status": ' + rows + '}}', encoding="utf-8")
+    core = Pruf(make_settings(tmp_path), ocr_enabled=False)
+    core.db.set_case_status("C-demo", "new", None, "a")
+    keeper = StateKeeper(core.db, FileBackend(target), delay=0)
+
+    # Act
+    counts = keeper.restore()
+    saved = keeper.save_now()
+    keeper.close()
+
+    # Assert: сервер работает на демо-состоянии, снимок не тронут, ошибка видна
+    assert counts is None and not saved
+    assert list(core.db.case_statuses()) == ["C-demo"]
+    assert target.read_text(encoding="utf-8").endswith(rows + "}}")
+    assert keeper.info()["saving"] is False and "не восстановлен" in keeper.info()["error"]
+    core.db.close()
+
+
 def test_changes_are_saved_after_a_short_delay(tmp_path: Path) -> None:
     core = Pruf(make_settings(tmp_path), ocr_enabled=False)
     backend = FileBackend(tmp_path / "state.json")
