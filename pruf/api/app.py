@@ -14,6 +14,7 @@ import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -501,6 +502,13 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         return ok(domains, total=len(domains), version=core().version)
 
     # ---------- разведчик ----------
+    @app.get("/api/v1/bot/feedback")
+    def bot_feedback(days: int = Query(default=30, ge=1, le=365), actor: str = Depends(analyst)):
+        """Признаки, которые пользователи бота оспорили кнопкой «Это не мошенничество»: очередь на ревью словаря."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+        db = core().db
+        return ok(db.disputed_features(since), total=db.bot_feedback_count(), days=days)
+
     @app.get("/api/v1/scout")
     def scout_view(actor: str = Depends(analyst)):
         """Каналы и связи, найденные разведчиком (python -m pruf.scout)."""

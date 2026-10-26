@@ -438,6 +438,21 @@ async function loadReports() {
   }
 }
 
+async function loadDisputes() {
+  const tbody = $("#dispute-rows");
+  try {
+    const { data, meta } = await api("/api/v1/bot/feedback?days=30");
+    $("#disputes-total").textContent = `всего отметок: ${meta.total}`;
+    tbody.replaceChildren(...(data.length ? data.map((r) => el("tr", {},
+      el("td", {}, r.label), el("td", { class: "mono" }, r.feature_id), el("td", {}, el("b", {}, r.reporters)), el("td", {}, r.disputes),
+      el("td", {}, r.shown), el("td", {}, el("b", { class: r.rate >= 0.2 && r.reporters >= 2 ? "err" : "" }, Math.round(r.rate * 100) + "%")),
+      el("td", {}, day(r.last))))
+      : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Отметок пока нет"))]));
+  } catch (err) {
+    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "err" }, err.message)));
+  }
+}
+
 const LIST_NAME = { grey: "серый", black: "чёрный", cleared: "снят" };
 
 function listBadge(r) {
@@ -490,6 +505,7 @@ function switchView(name) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-" + name));
   if (name === "bank") loadBank();
+  if (name === "check") loadDisputes();
   if (name === "scout") loadScout();
   if (name === "overview") loadOverview(openCase);
   if (name !== "queue") history.replaceState(null, "", "#" + name);

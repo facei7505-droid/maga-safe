@@ -142,6 +142,25 @@ CREATE TABLE IF NOT EXISTS report_requisites (
     PRIMARY KEY (report_id, key)
 );
 CREATE INDEX IF NOT EXISTS idx_report_req_key ON report_requisites(key);
+CREATE TABLE IF NOT EXISTS bot_feedback (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    reporter TEXT NOT NULL,
+    check_id TEXT NOT NULL,
+    level TEXT NOT NULL,
+    score REAL NOT NULL,
+    track TEXT,
+    lang TEXT NOT NULL,
+    features TEXT NOT NULL DEFAULT '[]',
+    UNIQUE (reporter, check_id)
+);
+CREATE TABLE IF NOT EXISTS bot_feature_shown (
+    feature_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    label TEXT NOT NULL,
+    shown INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (feature_id, day)
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -331,6 +350,19 @@ class Database:
             "SELECT pr.post_id FROM post_requisites pr JOIN requisites r ON r.id=pr.requisite_id WHERE r.key=? "
             "ORDER BY pr.post_id DESC LIMIT ?", (key, limit))]
 
+    def requisite_cleared_at(self, key: str) -> str | None:
+        """Когда аналитик снял реквизит (отклонил кейс), если подтверждённых решений по нему нет; иначе None."""
+        row = self._one("SELECT MAX(decision='confirmed') AS black, MAX(CASE WHEN decision='dismissed' THEN updated_at END) AS cleared "
+                        "FROM requisite_status WHERE key=?", (key,))
+        return None if not row or row["black"] else row["cleared"]
+
+    def posts_created_after(self, ids: Iterable[int], ts: str) -> set[int]:
+        ids = list(ids)
+        if not ids:
+            return set()
+        marks = ",".join("?" * len(ids))
+        return {r["id"] for r in self._all(f"SELECT id FROM posts WHERE id IN ({marks}) AND created_at>?", [*ids, ts])}
+
     def lookup_requisite(self, key: str) -> dict[str, Any] | None:
         return self._one(
             "SELECT r.kind, r.display, r.first_seen, COUNT(DISTINCT p.id) AS posts, MAX(p.score) AS max_score, "
@@ -467,6 +499,62 @@ class Database:
             "MAX(k.trusted_reporters) AS trusted_reporters, MAX(k.trust) AS trust "
             "FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id JOIN per_key k ON k.key=rr.key GROUP BY rr.key "
             "ORDER BY trusted_reporters DESC, reporters DESC, last_report DESC LIMIT ?", (trusted_min, limit))
+
+    # ---------- «Это не мошенничество» из бота ----------
+    def count_bot_features(self, features: Sequence[tuple[str, str]]) -> None:
+        """Сколько раз признак показан в ответе бота со средним или высоким риском: знаменатель доли споров.
+        Только счётчики по дням, без текста и без того, кто спрашивал."""
+        if not features:
+            return
+        today = utcnow()[:10]
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO bot_feature_shown (feature_id, day, label, shown) VALUES (?,?,?,1) "
+                "ON CONFLICT(feature_id, day) DO UPDATE SET shown=shown+1, label=excluded.label",
+                [(fid, today, label) for fid, label in dict(features).items()])
+
+    def add_bot_feedback(self, *, reporter: str, check_id: str, level: str, score: float, track: str | None,
+                         lang: str, features: Sequence[tuple[str, str]], daily_cap: int = 30) -> bool:
+        """Отметка «это не мошенничество». Хранятся только номера и названия сработавших признаков,
+        уровень и балл; текст и цитаты поста не сохраняются. Повтор и отметки сверх daily_cap не считаются."""
+        today = utcnow()[:10]
+        with self._lock, self._conn:
+            sent = self._conn.execute("SELECT COUNT(*) FROM bot_feedback WHERE reporter=? AND ts=?", (reporter, today)).fetchone()[0]
+            if sent >= daily_cap:
+                return False
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO bot_feedback (ts, reporter, check_id, level, score, track, lang, features) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (today, reporter, check_id, level, score, track, lang, json.dumps([list(f) for f in features], ensure_ascii=False)))
+            return bool(cur.rowcount)
+
+    def disputed_features(self, since: str | None = None) -> list[dict[str, Any]]:
+        """Признаки, которые люди оспорили в боте: сколько отметок и людей, сколько раз признак был показан
+        и доля споров. Сверху признаки с наибольшим числом людей: это кандидаты на ревью словаря."""
+        since = since or "0000"
+        rows = self._all("SELECT reporter, ts, features FROM bot_feedback WHERE ts>=?", (since,))
+        shown = {r["feature_id"]: r for r in self._all(
+            "SELECT feature_id, SUM(shown) AS shown, MAX(label) AS label FROM bot_feature_shown WHERE day>=? GROUP BY feature_id",
+            (since,))}
+        agg: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            for fid, label in json.loads(r["features"]):
+                a = agg.setdefault(fid, {"feature_id": fid, "label": label, "disputes": 0, "reporters": set(), "last": r["ts"]})
+                a["disputes"] += 1
+                a["reporters"].add(r["reporter"])
+                a["last"] = max(a["last"], r["ts"])
+        out = []
+        for fid, a in agg.items():
+            n = int((shown.get(fid) or {}).get("shown") or 0)
+            # показов не меньше споров: счётчик показов мог начаться позже первых отметок
+            n = max(n, a["disputes"])
+            out.append({**a, "reporters": len(a["reporters"]), "shown": n, "rate": round(a["disputes"] / n, 3)})
+        out.sort(key=lambda a: (-a["reporters"], -a["rate"], a["feature_id"]))
+        return out
+
+    def bot_feedback_count(self) -> int:
+        row = self._one("SELECT COUNT(*) AS n FROM bot_feedback")
+        return int(row["n"]) if row else 0
 
     def report_count(self) -> int:
         row = self._one("SELECT COUNT(*) AS n FROM user_reports")

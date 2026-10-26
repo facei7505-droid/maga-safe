@@ -101,6 +101,16 @@
           </form>
           <div id="check-result" class="check-result"></div>
         </div>
+        <div class="panel table-panel" id="disputes-panel">
+          <div class="row bank-head">
+            <h3>Оспоренные признаки из бота</h3>
+            <span class="muted small" id="disputes-total"></span>
+          </div>
+          <p class="muted small">Кнопка «Это не мошенничество» под ответом Telegram-бота. Сохраняются только сработавшие признаки, уровень и балл; текст поста и цитаты не хранятся. Доля споров = отметки / сколько раз признак показан в ответах со средним и высоким риском за 30 дней. Высокая доля от нескольких людей — повод пересмотреть правило в словаре.</p>
+          <div class="table-scroll">
+            <table class="table"><thead><tr><th>Признак</th><th>Код</th><th>Людей</th><th>Отметок</th><th>Показан</th><th>Доля споров</th><th>Последняя</th></tr></thead><tbody id="dispute-rows"></tbody></table>
+          </div>
+        </div>
       </section>
 
       <section id="view-bank" class="view hidden">

@@ -9,8 +9,12 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
+import secrets
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -31,12 +35,19 @@ CHAT_LIMIT_PER_MINUTE = 20
 GLOBAL_LIMIT_PER_MINUTE = 120  # общий потолок: много чатов не забьют OCR и исходящую квоту Telegram
 MAX_VOICE_SECONDS = 120
 POLL_TIMEOUT = 30
+FEEDBACK_PREFIX = "fp:"
+FEEDBACK_TTL = 24 * 3600  # кнопка «Это не мошенничество» живёт сутки
+FEEDBACK_MAX_PENDING = 5000  # ответы, по которым ещё можно нажать кнопку; старые вытесняются
+RISKY = ("medium", "high")
 LEVEL_ICON = {"high": "🔴", "medium": "🟠", "low": "🟢"}
 HELP = say("ru", "help")
 
 
 class TelegramApi(Protocol):
-    def send_message(self, chat_id: int, text: str, reply_to: int | None = None) -> None: ...
+    def send_message(self, chat_id: int, text: str, reply_to: int | None = None,
+                     buttons: list[tuple[str, str]] | None = None) -> None: ...
+    def answer_callback(self, callback_id: str, text: str) -> None: ...
+    def clear_buttons(self, chat_id: int, message_id: int) -> None: ...
     def file_size_and_path(self, file_id: str) -> tuple[int, str]: ...
     def download(self, file_path: str, max_bytes: int) -> bytes: ...
 
@@ -46,6 +57,18 @@ class Reply:
     chat_id: int
     text: str
     reply_to: int | None = None
+    buttons: list[tuple[str, str]] | None = None  # (надпись, callback_data)
+
+
+@dataclass(frozen=True)
+class _Pending:
+    """Что запомнить до нажатия «Это не мошенничество»: признаки без цитат, уровень и балл. Текста нет."""
+    created: float
+    level: str
+    score: float
+    track: str | None
+    lang: str
+    features: tuple[tuple[str, str], ...]
 
 
 class BotLogic:
@@ -56,8 +79,13 @@ class BotLogic:
         self._max_bytes = max_bytes
         self._limiter = limiter or RateLimiter(CHAT_LIMIT_PER_MINUTE)
         self._global = global_limiter or RateLimiter(GLOBAL_LIMIT_PER_MINUTE)
+        self._pending: OrderedDict[str, _Pending] = OrderedDict()
+        self._pending_lock = threading.Lock()
 
     def handle(self, update: dict[str, Any]) -> Reply | None:
+        if "callback_query" in update:
+            self._on_button(update["callback_query"] or {})
+            return None
         # Только личные сообщения: в группах и каналах бот не отвечает на всё подряд.
         msg = update.get("message") or {}
         chat = msg.get("chat") or {}
@@ -70,7 +98,7 @@ class BotLogic:
             log.exception("ошибка проверки сообщения")
             reply = Reply(chat["id"], say(lang, "check_failed"), msg.get("message_id"))
         if reply:
-            self._api.send_message(reply.chat_id, reply.text[:MAX_MESSAGE], reply.reply_to)
+            self._api.send_message(reply.chat_id, reply.text[:MAX_MESSAGE], reply.reply_to, reply.buttons)
         return reply
 
     def _answer(self, chat: int, msg: dict[str, Any], lang: str = "ru") -> Reply | None:
@@ -94,7 +122,71 @@ class BotLogic:
             result = self._pruf.check(text, images=tuple(images), transcript=transcript, public=True)
         except (UnidentifiedImageError, ValueError, OSError, Image.DecompressionBombError):
             return Reply(chat, say(lang, "bad_image"), mid)
-        return Reply(chat, format_result(result, note, lang), mid)
+        return Reply(chat, format_result(result, note, lang), mid, self._feedback_button(result["analysis"], lang))
+
+    # ---------- «Это не мошенничество» ----------
+    def _feedback_button(self, analysis: dict[str, Any], lang: str) -> list[tuple[str, str]] | None:
+        """Кнопка под ответом со средним и высоким риском. Нажатие станет разметкой для ревью словаря
+        (docs/rollout.md, «Как система учится»), поэтому запоминаем только признаки, а не текст."""
+        if analysis["level"] not in RISKY:
+            return None
+        # один признак может сработать на нескольких цитатах: в разметку идёт один раз
+        features = tuple({e["feature_id"]: e["label"] for e in analysis.get("evidence", []) if e.get("weight", 0) > 0}.items())
+        if not features:
+            return None
+        token = secrets.token_urlsafe(9)
+        now = time.monotonic()
+        with self._pending_lock:
+            while self._pending:
+                oldest = next(iter(self._pending.values()))
+                if len(self._pending) < FEEDBACK_MAX_PENDING and now - oldest.created < FEEDBACK_TTL:
+                    break
+                self._pending.popitem(last=False)
+            self._pending[token] = _Pending(now, analysis["level"], float(analysis["score"]), analysis.get("track"),
+                                            lang, features)
+        try:
+            self._pruf.db.count_bot_features(features)
+        except Exception:
+            log.exception("не удалось учесть показ признаков")  # счётчик не должен ломать ответ
+        return [(say(lang, "not_scam_button"), FEEDBACK_PREFIX + token)]
+
+    def _on_button(self, query: dict[str, Any]) -> None:
+        msg = query.get("message") or {}
+        chat = msg.get("chat") or {}
+        user = (query.get("from") or {}).get("id")
+        data = str(query.get("data") or "")
+        if not query.get("id") or not isinstance(user, int) or chat.get("type") != "private" \
+                or not data.startswith(FEEDBACK_PREFIX):
+            return
+        token = data[len(FEEDBACK_PREFIX):]
+        with self._pending_lock:
+            pending = self._pending.get(token)
+            if pending and time.monotonic() - pending.created >= FEEDBACK_TTL:
+                pending = None
+        lang = pending.lang if pending else reply_lang("", (query.get("from") or {}).get("language_code"))
+        try:
+            self._limiter.check(f"tg:{user}")
+        except HTTPException:
+            self._api.answer_callback(query["id"], say(lang, "too_many"))
+            return
+        if pending is None:
+            self._api.answer_callback(query["id"], say(lang, "feedback_expired"))
+            return
+        # Отпечаток человека меняется раз в месяц, как у жалоб из расширения: повтор не считается дважды,
+        # но по базе нельзя восстановить, кто именно спорил.
+        epoch = time.strftime("%Y-%m", time.gmtime())
+        reporter = hmac.new(self._pruf.settings.effective_hmac_key(), f"tg|{user}|{epoch}".encode(), "sha256").hexdigest()[:24]
+        accepted = self._pruf.db.add_bot_feedback(reporter=reporter, check_id=token, level=pending.level,
+                                                  score=pending.score, track=pending.track, lang=pending.lang,
+                                                  features=pending.features)
+        with self._pending_lock:
+            self._pending.pop(token, None)
+        self._api.answer_callback(query["id"], say(lang, "feedback_thanks" if accepted else "feedback_dup"))
+        if isinstance(msg.get("message_id"), int):
+            try:
+                self._api.clear_buttons(chat["id"], msg["message_id"])
+            except RuntimeError as exc:
+                log.warning("кнопку не убрать: %s", exc)
 
     def _media(self, msg: dict[str, Any]) -> tuple[list[bytes], str | None, str | None]:
         """Картинки, расшифровка голосового и ключ пояснения (pruf/bot/texts.py), если что-то не проверено."""
@@ -193,11 +285,21 @@ class HttpTelegramApi:
             raise RuntimeError(f"Telegram {method}: {body.get('description', 'ошибка')}")
         return body["result"]
 
-    def send_message(self, chat_id: int, text: str, reply_to: int | None = None) -> None:
+    def send_message(self, chat_id: int, text: str, reply_to: int | None = None,
+                     buttons: list[tuple[str, str]] | None = None) -> None:
         params: dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
         if reply_to:
             params["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
+        if buttons:
+            params["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d}] for t, d in buttons]}
         self._call("sendMessage", **params)
+
+    def answer_callback(self, callback_id: str, text: str) -> None:
+        self._call("answerCallbackQuery", callback_query_id=callback_id, text=text)
+
+    def clear_buttons(self, chat_id: int, message_id: int) -> None:
+        self._call("editMessageReplyMarkup", chat_id=chat_id, message_id=message_id,
+                   reply_markup={"inline_keyboard": []})
 
     def file_size_and_path(self, file_id: str) -> tuple[int, str]:
         info = self._call("getFile", file_id=file_id)
@@ -217,7 +319,7 @@ class HttpTelegramApi:
         return bytes(buf)
 
     def get_updates(self, offset: int | None) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"timeout": POLL_TIMEOUT, "allowed_updates": ["message"]}
+        params: dict[str, Any] = {"timeout": POLL_TIMEOUT, "allowed_updates": ["message", "callback_query"]}
         if offset is not None:
             params["offset"] = offset
         return self._call("getUpdates", **params)
