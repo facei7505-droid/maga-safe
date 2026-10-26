@@ -121,6 +121,7 @@ $env:PRUF_DEV_MODE="1"; $env:PRUF_DATA_DIR="data/demo"
 
 ## Охват, пилот и защита
 
+- [docs/analysis.md](docs/analysis.md) — полный анализ проекта: что и как устроено, качество, сильные и слабые стороны, что дальше.
 - [docs/coverage.md](docs/coverage.md) — что ПРУФ собирает сам, что приходит от людей и чего не видит.
 - [docs/pilot/bank.md](docs/pilot/bank.md) — пилот с банком: API в обе стороны, метрики, шаблон письма о намерениях.
   Банк сообщает исход по реквизиту: `POST /api/v1/bank/feedback` (`fraud_confirmed` / `legit_client`);
