@@ -16,7 +16,10 @@
     $("copyWarnings").textContent = s.stats.copyWarnings || 0;
     $("reported").textContent = s.stats.reported || 0;
     const bl = s.blacklist;
-    $("blacklist").textContent = bl.error
+    $("siteGuard").checked = await chrome.permissions.contains({ origins: ["<all_urls>"] });
+    $("blacklist").textContent = bl.disabled
+      ? t(lang, "blacklistOff")
+      : bl.error
       ? t(lang, "blacklistError", { error: bl.error })
       : bl.updated
         ? t(lang, "blacklistOk", { count: bl.count, when: new Date(bl.updated).toLocaleString(lang === "kk" ? "kk-KZ" : "ru-RU") })
@@ -31,10 +34,26 @@
       $("status").textContent = t(lang, "badUrl");
       return;
     }
+    // свой сервер ПРУФ: доступ только к его адресу, по нажатию человека (Chrome спросит сам)
+    const origin = new URL(apiUrl).origin + "/*";
+    if (!(await chrome.permissions.contains({ origins: [origin] })) && !(await chrome.permissions.request({ origins: [origin] }))) {
+      $("status").textContent = t(lang, "serverDenied");
+      return;
+    }
     await chrome.storage.local.set({ apiUrl, token: $("token").value.trim() });
     $("status").textContent = t(lang, "savedRefreshing");
     await chrome.runtime.sendMessage({ type: "refresh" });
     $("status").textContent = t(lang, "done");
+    render();
+  });
+  $("siteGuard").addEventListener("change", async (e) => {
+    const all = { origins: ["<all_urls>"] };
+    if (e.target.checked) {
+      e.target.checked = await chrome.permissions.request(all);
+    } else {
+      await chrome.permissions.remove(all);
+    }
+    await chrome.runtime.sendMessage({ type: "refresh" });
     render();
   });
   $("lang").addEventListener("change", async () => {

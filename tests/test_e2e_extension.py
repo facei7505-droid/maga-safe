@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -72,23 +74,41 @@ def server(tmp_path_factory: pytest.TempPathFactory, detector):
     thread.join(timeout=5)
 
 
+def _granted_copy(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Копия расширения, где доступ ко всем сайтам уже выдан — как после галочки «Предупреждать на сайтах казино»:
+    необязательное разрешение в headless-браузере без нажатия человека не запросить."""
+    dst = tmp_path_factory.mktemp("ext") / "extension"
+    shutil.copytree(EXTENSION, dst, ignore=shutil.ignore_patterns("test"))
+    manifest = json.loads((dst / "manifest.json").read_text(encoding="utf-8"))
+    manifest["host_permissions"] = manifest["host_permissions"] + ["<all_urls>"]
+    (dst / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    return dst
+
+
 @pytest.fixture(scope="module")
-def context(server: str, tmp_path_factory: pytest.TempPathFactory):
+def pw():
+    """Один экземпляр Playwright на модуль: второй sync_playwright внутри первого не запускается."""
     if not Path(CHROMIUM).exists():
         pytest.skip("Chromium для E2E не найден (PRUF_E2E_CHROMIUM)")
     with playwright_api.sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            str(tmp_path_factory.mktemp("profile")), executable_path=CHROMIUM, headless=True,
-            args=[f"--disable-extensions-except={EXTENSION}", f"--load-extension={EXTENSION}"])
-        worker = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=10_000)
-        worker.evaluate("url => chrome.storage.local.set({apiUrl: url})", server)
-        worker.evaluate("() => refreshBlacklist()")
-        ctx.route("https://web.telegram.org/**", lambda route: route.fulfill(
-            status=200, content_type="text/html; charset=utf-8", body=TELEGRAM_PAGE))
-        ctx.route("https://web.whatsapp.com/**", lambda route: route.fulfill(
-            status=200, content_type="text/html; charset=utf-8", body=WHATSAPP_PAGE))
-        yield ctx, worker
-        ctx.close()
+        yield p
+
+
+@pytest.fixture(scope="module")
+def context(pw, server: str, tmp_path_factory: pytest.TempPathFactory):
+    ext = _granted_copy(tmp_path_factory)
+    ctx = pw.chromium.launch_persistent_context(
+        str(tmp_path_factory.mktemp("profile")), executable_path=CHROMIUM, headless=True,
+        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    worker = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=10_000)
+    worker.evaluate("url => chrome.storage.local.set({apiUrl: url})", server)
+    worker.evaluate("() => refreshBlacklist()")
+    ctx.route("https://web.telegram.org/**", lambda route: route.fulfill(
+        status=200, content_type="text/html; charset=utf-8", body=TELEGRAM_PAGE))
+    ctx.route("https://web.whatsapp.com/**", lambda route: route.fulfill(
+        status=200, content_type="text/html; charset=utf-8", body=WHATSAPP_PAGE))
+    yield ctx, worker
+    ctx.close()
 
 
 def test_banner_appears_over_scam_post_only(context) -> None:
@@ -243,3 +263,31 @@ def test_kazakh_interface_for_banner_copy_warning_and_block_page(context) -> Non
         page.close()
     finally:
         worker.evaluate("() => chrome.storage.local.set({lang: 'auto'})")
+
+
+def test_shipped_manifest_asks_only_for_messengers() -> None:
+    manifest = json.loads((EXTENSION / "manifest.json").read_text(encoding="utf-8"))
+    assert "<all_urls>" not in manifest["host_permissions"]
+    assert manifest["optional_host_permissions"] == ["<all_urls>"]
+
+
+def test_shipped_extension_blocks_nothing_by_default(pw, server: str, tmp_path_factory) -> None:
+    # Arrange: расширение как в магазине — доступ ко всем сайтам необязательный и не выдан
+    ctx = pw.chromium.launch_persistent_context(
+        str(tmp_path_factory.mktemp("profile-default")), executable_path=CHROMIUM, headless=True,
+        args=[f"--disable-extensions-except={EXTENSION}", f"--load-extension={EXTENSION}"])
+    try:
+        worker = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=10_000)
+        worker.evaluate("url => chrome.storage.local.set({apiUrl: url})", server)
+
+        # Act
+        worker.evaluate("() => refreshBlacklist()")
+
+        # Assert: правил перенаправления нет, popup говорит, что предупреждения выключены
+        assert worker.evaluate("() => chrome.declarativeNetRequest.getDynamicRules()") == []
+        page = ctx.new_page()
+        page.goto(f"chrome-extension://{worker.url.split('/')[2]}/popup.html")
+        page.wait_for_function("document.getElementById('blacklist').textContent.includes('выключены')", timeout=10_000)
+        assert page.locator("#siteGuard").is_checked() is False
+    finally:
+        ctx.close()

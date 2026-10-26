@@ -4,7 +4,9 @@
   "version": "0.2.0",
   "description": "Предупреждает о признаках платных розыгрышей, скрытой рекламы казино и финансовых пирамид в Telegram Web, WhatsApp Web и Instagram.",
   "permissions": ["storage", "alarms", "contextMenus", "notifications", "declarativeNetRequest"],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": ["https://web.telegram.org/*", "https://www.instagram.com/*", "https://web.whatsapp.com/*",
+                       "http://127.0.0.1/*", "http://localhost/*", "https://*.onrender.com/*"],
+  "optional_host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {

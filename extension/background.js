@@ -92,7 +92,18 @@ function blacklistRules(domains) {
   }));
 }
 
+// Перенаправление на страницу-предупреждение требует доступа к самим сайтам казино. Этот доступ необязательный:
+// его включает сам человек галочкой в popup, без неё правила не ставятся и расширение видит только мессенджеры.
+const ALL_SITES = { origins: ["<all_urls>"] };
+
 async function refreshBlacklist() {
+  if (!(await chrome.permissions.contains(ALL_SITES))) {
+    const old = await chrome.declarativeNetRequest.getDynamicRules();
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: old.map((r) => r.id) });
+    const prev = (await chrome.storage.local.get({ blacklist: {} })).blacklist;
+    await chrome.storage.local.set({ blacklist: { ...prev, disabled: true, error: null } });
+    return;
+  }
   try {
     const body = await api("/api/v1/blacklist/domains");
     const domains = body.data.filter((d) => /^[a-z0-9.-]+\.[a-z]{2,63}$/.test(d));
@@ -101,7 +112,7 @@ async function refreshBlacklist() {
       removeRuleIds: old.map((r) => r.id),
       addRules: blacklistRules(domains),
     });
-    await chrome.storage.local.set({ blacklist: { count: domains.length, updated: new Date().toISOString(), error: null } });
+    await chrome.storage.local.set({ blacklist: { count: domains.length, updated: new Date().toISOString(), error: null, disabled: false } });
   } catch (err) {
     const prev = (await chrome.storage.local.get({ blacklist: {} })).blacklist;
     await chrome.storage.local.set({ blacklist: { ...prev, error: String(err.message || err) } });
@@ -188,6 +199,8 @@ chrome.runtime.onStartup.addListener(refreshBlacklist);
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.lang) setupMenu(); // пункт меню на новом языке
 });
+chrome.permissions.onAdded.addListener(refreshBlacklist);
+chrome.permissions.onRemoved.addListener(refreshBlacklist);
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === BLACKLIST_ALARM) refreshBlacklist();
 });
