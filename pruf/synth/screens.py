@@ -37,12 +37,15 @@ class Receipt:
     time: str  # «14:35»
     receipt_no: str
     accent: tuple[int, int, int] = (226, 38, 38)
+    layout: str = "card"  # «wallet» — другой банк: разные шаблоны не похожи для PDQ и без OCR
 
 
 AMOUNT_XY = (60, 300)
 
 
 def render_receipt(r: Receipt) -> Image.Image:
+    if r.layout == "wallet":
+        return _render_wallet(r)
     img = Image.new("RGB", (W, H), (245, 246, 248))
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, W, 120], fill=r.accent)
@@ -58,6 +61,26 @@ def render_receipt(r: Receipt) -> Image.Image:
         y += 62
     d.rounded_rectangle([60, 800, W - 60, 880], radius=40, fill=r.accent)
     d.text((170, 822), "Готово", fill="white", font=_font(32, True))
+    return img
+
+
+def _render_wallet(r: Receipt) -> Image.Image:
+    """Чек другого банка: тёмная шапка во всю верхнюю треть, строки в две колонки, тёмный подвал.
+    Сумма на белом поле в тех же координатах, что у «card», — edit_amount подделывает оба шаблона."""
+    img = Image.new("RGB", (W, H), "white")
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, W, 270], fill=(28, 32, 44))
+    d.ellipse([W - 170, 40, W - 50, 160], fill=r.accent)
+    d.text((40, 60), "Wallet KZ", fill="white", font=_font(40, True))
+    d.text((40, 130), "Входящий перевод", fill=(190, 196, 210), font=_font(28))
+    d.text(AMOUNT_XY, f"+{r.amount} T", fill=(20, 20, 20), font=_font(64, True))
+    rows = [("От", r.sender), ("Дата", r.date), ("Время", r.time), ("№", r.receipt_no)]
+    for i, (label, value) in enumerate(rows):
+        x, y = 40 + (i % 2) * 250, 470 + (i // 2) * 120
+        d.text((x, y), label, fill=(140, 140, 150), font=_font(22))
+        d.text((x, y + 34), value, fill=(25, 25, 25), font=_font(28, True))
+    d.rectangle([0, H - 200, W, H], fill=(28, 32, 44))
+    d.rectangle([40, H - 150, W // 2, H - 110], fill=r.accent)
     return img
 
 

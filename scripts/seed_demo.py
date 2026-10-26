@@ -25,7 +25,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-os.environ.setdefault("PRUF_DEV_MODE", "1")
 
 from pruf.config import ROOT, Settings
 from pruf.detect.classifier import TrackClassifier
@@ -118,7 +117,8 @@ def seed_hero(pruf: Pruf, rng: random.Random, shift: timedelta = timedelta()) ->
     """37 появлений одного скрина выплаты, 5 из них с перерисованной суммой, один номер на три трека."""
     start = HERO_START + shift
     receipt_day = (start - timedelta(days=1)).strftime("%d.%m.%Y")  # чек «выплаты» за день до первого поста
-    base_img = render_receipt(Receipt("150 000", "Айгерим С.", receipt_day, "14:35", "7740213"))
+    # свой шаблон чека: без OCR (бесплатный Render) похожие чеки фона иначе склеились бы с кейсом-героем
+    base_img = render_receipt(Receipt("150 000", "Айгерим С.", receipt_day, "14:35", "7740213", layout="wallet"))
     base = to_jpeg(base_img, 90)
     edited_at = set(rng.sample(range(4, HERO_APPEARANCES), HERO_EDITED))
     fake_amounts = iter(["450 000", "1 150 000", "750 000", "350 000", "950 000"])
@@ -262,6 +262,7 @@ def main() -> None:
     ap.add_argument("--no-ocr", action="store_true", help="без OCR (быстро, но без диффа сумм)")
     args = ap.parse_args()
 
+    os.environ.setdefault("PRUF_DEV_MODE", "1")  # только для запуска скриптом: импорт модуля сервером env не трогает
     settings = Settings(anthropic_api_key="")  # заливка демо не тратит API: арбитр зовётся только для новых постов на сайте
     if args.reset and (not os.environ.get("PRUF_DATA_DIR") or settings.data_dir.resolve() == (ROOT / "data").resolve()):
         sys.exit("--reset удаляет каталог данных: задайте отдельный PRUF_DATA_DIR (например data/demo), не основной data/")
@@ -273,11 +274,17 @@ def main() -> None:
 
     clf = ensure_model(settings)
     pruf = Pruf(settings, detector=Detector(settings, classifier=clf), ocr_enabled=not args.no_ocr)
+    seed_all(pruf, args.campaigns, args.legit)
+
+
+def seed_all(pruf: Pruf, campaigns: int = 3, legit: int = 120) -> None:
+    """Вся демо-заливка в готовый Pruf: и из этого скрипта, и из сервера при первом старте (pruf/demo_boot.py)."""
+    settings = pruf.settings
     t0 = time.perf_counter()
     tmp = settings.data_dir / "_seed_tmp"
     try:
         shift = demo_shift()
-        n = seed_background(pruf, tmp, args.campaigns, args.legit, shift)
+        n = seed_background(pruf, tmp, campaigns, legit, shift)
         _log(f"фон: {n} постов за {time.perf_counter() - t0:.1f} с")
         counts = seed_hero(pruf, random.Random(2026), shift)
         _log(f"вау-сценарий: {HERO_APPEARANCES} появлений пруфа, {HERO_EDITED} с правкой суммы, треки {counts}")

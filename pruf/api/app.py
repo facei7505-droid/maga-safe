@@ -29,11 +29,12 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator
 
+from pruf import demo_boot
 from pruf.analytics import overview
 from pruf.api.security import RateLimiter, require_analyst, require_bank, require_extension, sniff_upload
 from pruf.bot.telegram import BotLogic, HttpTelegramApi
@@ -59,6 +60,8 @@ MIN_WEBHOOK_SECRET = 32
 WEBHOOK_MAX_BODY = 1024 * 1024  # update Telegram меньше 1 МБ, файлы приходят ссылками
 BOT_WORKERS = 2
 BOT_MAX_PENDING = 50
+SEED_RETRY_AFTER = 10  # секунд: страница «Демо загружается» и 503 API во время фоновой заливки
+SEED_JOIN_TIMEOUT = 30  # остановка сервера ждёт заливку не дольше
 WEB_DIR = ROOT / "web"
 
 
@@ -150,7 +153,13 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         state["pruf"] = pruf or Pruf(settings)
         state["graph"] = CaseGraph(state["pruf"].db)
         state["inspector"] = Inspector(state["pruf"].db, state["pruf"].settings.effective_hmac_key())
-        start_state_keeper(state["pruf"])
+        if settings.seed_demo and state["pruf"].db.count_posts() == 0:
+            # порт открыт сразу, демо заливается в фоне; решения людей восстанавливаются поверх демо после заливки
+            state["seeding"] = True
+            state["seeder"] = threading.Thread(target=seed_then_restore, args=(state["pruf"],), name="demo-seed", daemon=True)
+            state["seeder"].start()
+        else:
+            start_state_keeper(state["pruf"])
         if settings.telegram_token:
             if len(settings.telegram_secret) < MIN_WEBHOOK_SECRET or not settings.telegram_secret.replace("-", "").replace("_", "").isalnum():
                 log.warning("вебхук бота выключен: задайте PRUF_TELEGRAM_SECRET из %d+ символов [A-Za-z0-9_-]", MIN_WEBHOOK_SECRET)
@@ -164,11 +173,25 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         if settings.dev_mode:
             log.warning("PRUF_DEV_MODE=1: токены не обязательны, не используйте в проде")
         yield
+        if "seeder" in state:
+            state["seeder"].join(SEED_JOIN_TIMEOUT)
         if "bot_pool" in state:
             state["bot_pool"].shutdown(wait=True)
         if "keeper" in state:
             state["keeper"].close()  # последние изменения — в снимок до закрытия базы
         state["pruf"].db.close()
+
+    def seed_then_restore(p: Pruf) -> None:
+        started = time.perf_counter()
+        try:
+            demo_boot.seed(p)
+        except Exception:  # noqa: BLE001 — сервер работает и без демо, ошибка в логе
+            log.exception("демо-данные не созданы")
+            state["seed_error"] = "демо-данные не созданы, подробности в логе сервера"
+        start_state_keeper(p)
+        p.version += 1  # новые посты и решения: граф и проверка пересоберутся
+        state["seeding"] = False
+        log.info("демо готово за %.1f с", time.perf_counter() - started)
 
     def start_state_keeper(p: Pruf) -> None:
         try:
@@ -190,6 +213,8 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
+        if state.get("seeding") and not request.url.path.startswith("/static/"):
+            return seeding_response(request.url.path)
         length = request.headers.get("content-length")
         # Тело читается и разбирается до проверки токена, поэтому большие тела принимаем только там,
         # где они нужны (приём файлов); JSON-маршрутам хватает 256 КБ.
@@ -208,6 +233,14 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
             "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         return response
+
+    def seeding_response(path: str) -> Response:
+        headers = {"Retry-After": str(SEED_RETRY_AFTER), "Cache-Control": "no-store"}
+        if path.startswith("/api/"):
+            data = {"status": "seeding"} if path == "/api/v1/health" else None
+            return JSONResponse({"success": False, "data": data, "error": "Демо загружается, повторите через минуту", "meta": None},
+                                status_code=503, headers=headers)
+        return HTMLResponse(demo_boot.LOADING_PAGE, status_code=503, headers=headers)
 
     def analyst(request: Request) -> str:
         return require_analyst(request, settings, limiter)
@@ -434,7 +467,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
                    "images_indexed": len(p.registry.images), "texts_indexed": len(p.registry.texts),
                    "capabilities": capabilities(p), "state": saved,
                    # посты демо-заливки (scripts/seed_demo.py): дашборд честно говорит, что они придуманы
-                   "demo_posts": p.db.count_posts_from("seed")})
+                   "demo_posts": p.db.count_posts_from("seed"), "demo_error": state.get("seed_error")})
 
     @app.get("/api/v1/overview")
     def overview_view(actor: str = Depends(analyst)):
