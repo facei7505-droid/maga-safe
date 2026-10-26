@@ -159,3 +159,27 @@ def _noisy(img: Image.Image, sigma: float) -> Image.Image:
 ])
 def test_qr_survives_photo_like_distortions(name: str, make) -> None:
     assert decode_qr(make(_poster(KASPI_PAY))) == [KASPI_PAY], name
+
+
+def test_ingest_resolves_links_once_outside_the_lock_and_stores_final_domain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: раскрытие ссылки «медленное»; под общей блокировкой приёма его быть не должно
+    from pruf.normalize.links import Link
+
+    p = Pruf(make_settings(tmp_path, resolve_links=True), ocr_enabled=False)
+    held: list[bool] = []
+
+    def fake_resolve(link: Link) -> Link:
+        held.append(p._ingest_lock.locked())
+        return Link(url=link.url, domain="joy-slots-kz.top", is_shortener=True, is_messenger=False,
+                    raw_span=link.raw_span, resolved="https://joy-slots-kz.top/?ref=1")
+
+    monkeypatch.setattr("pruf.detect.detector.resolve_shortener", fake_resolve)
+    try:
+        # Act
+        post = p.ingest(Submission(text="Новая игра, бонус 200% на депозит, заходи bit.ly/abc123", source="t"), allow_llm=False)
+
+        # Assert
+        assert held == [False]
+        assert [link["domain"] for link in p.db.links_for_post(post["post_id"])] == ["joy-slots-kz.top"]
+    finally:
+        p.db.close()

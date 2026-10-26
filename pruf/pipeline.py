@@ -215,19 +215,21 @@ class Pruf:
             ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
             sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""),
                        SourceText("qr", "\n".join(qr or ())), SourceText("voice", transcript or "")]
-            first = self.detector.detect(sources, allow_llm=False)
+            # под общей блокировкой без сети: раскрытие коротких ссылок (до секунд на ссылку) остановило бы весь приём
+            first = self.detector.detect(sources, allow_llm=False, resolve_links=False)
             for r in first.requisites:
                 self.db.link_requisite(post_id, r.kind, r.key, r.display)
-            for link in first.links:
-                if _links_cases(link):
-                    self.db.add_link(post_id, link.url, link.domain, link.resolved)
             context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
         degraded.extend(self._ocr_degraded(got))
-        analysis = self.detector.detect(sources, context, allow_llm=allow_llm).analysis  # может звать LLM: вне блокировки
+        final = self.detector.detect(sources, context, allow_llm=allow_llm)  # LLM и раскрытие ссылок: вне блокировки
+        analysis = final.analysis
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))
         with self._ingest_lock:
+            for link in final.links:  # уже раскрытые: граф связывает зеркала по настоящему домену
+                if _links_cases(link):
+                    self.db.add_link(post_id, link.url, link.domain, link.resolved)
             self.db.update_post_analysis(post_id, score=analysis.score, level=analysis.level, track=analysis.track,
                                          analysis=analysis.to_dict(), ocr_text=redact_cards(ocr_text),
                                          transcript=redact_cards(transcript))
