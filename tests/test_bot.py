@@ -494,3 +494,19 @@ def test_feedback_endpoint_needs_analyst_and_lists_disputes(tmp_path: Path, monk
     assert anon.status_code == 401
     body = got.json()
     assert body["meta"]["total"] == 1 and body["data"][0]["disputes"] == 1
+
+
+def test_kazakh_reply_shows_kazakh_feature_labels(pruf: Pruf) -> None:
+    api = FakeApi()
+    reply = BotLogic(pruf, api, MAX_BYTES).handle(_msg(LOTTERY_KK.format(phone=KASPI_PHONE)))
+    assert reply is not None
+    assert "Жүлде немесе ұтыс ойыны туралы уәде" in reply.text
+    assert "орыс тілінде" not in reply.text and "Обещание приза" not in reply.text
+
+
+def test_every_scheme_feature_has_a_kazakh_label() -> None:
+    from pruf.bot.texts import LABELS_KK
+    from pruf.detect.lexicon import FEATURES
+
+    missing = [f.id for f in FEATURES if (f.weight > 0 or f.id.endswith(".awareness")) and f.id not in LABELS_KK]
+    assert missing == [], "переведите признаки для казахского ответа бота (pruf/bot/texts.py, LABELS_KK)"

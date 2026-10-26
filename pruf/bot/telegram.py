@@ -23,7 +23,7 @@ from fastapi import HTTPException
 from PIL import Image, UnidentifiedImageError
 
 from pruf.api.security import RateLimiter, sniff_upload
-from pruf.bot.texts import LEVELS, TRACKS, reply_lang, say
+from pruf.bot.texts import LEVELS, TRACKS, label, reply_lang, say
 from pruf.normalize.audio import transcribe, whisper_available
 from pruf.pipeline import Pruf
 
@@ -251,14 +251,17 @@ def format_result(result: dict[str, Any], note: str | None = None, lang: str = "
         head += "\n" + say(lang, "looks_like", track=TRACKS[lang].get(a["track"], a["track"]))
     lines = [head]
     positive = [e for e in a.get("evidence", []) if e.get("weight", 0) > 0]
-    if positive:
-        lines.append("\n" + say(lang, "found") + (" " + say(lang, "labels_ru") if lang == "kk" else ""))
-        for e in positive[:MAX_EVIDENCE_LINES]:
-            quote = f"\n   «{e['quote'][:160]}»" if e.get("quote") else ""
-            lines.append(f"• {e['label']}{quote}")
     stops = [e for e in a.get("evidence", []) if e.get("stop")]
+    shown = [(e, *label(lang, e.get("feature_id", ""), e["label"])) for e in positive[:MAX_EVIDENCE_LINES] + stops[:3]]
+    # «описания по-русски» — только если какой-то признак ещё не переведён
+    untranslated = any(not done for _, _, done in shown)
+    if positive:
+        lines.append("\n" + say(lang, "found") + (" " + say(lang, "labels_ru") if untranslated else ""))
+        for e, text, _ in shown[:len(positive[:MAX_EVIDENCE_LINES])]:
+            quote = f"\n   «{e['quote'][:160]}»" if e.get("quote") else ""
+            lines.append(f"• {text}{quote}")
     if stops:
-        lines.append("\n" + say(lang, "legal") + "; ".join(e["label"] for e in stops[:3]))
+        lines.append("\n" + say(lang, "legal") + "; ".join(text for _, text, _ in shown[len(positive[:MAX_EVIDENCE_LINES]):]))
     for d in a.get("degraded", []):
         lines.append(f"\n⚠️ {d['reason']}")
     if note:
