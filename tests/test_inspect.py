@@ -60,12 +60,12 @@ def test_registry_requisite_domain_and_text_copy(inspector: Inspector) -> None:
     ids = {r["id"] for r in res["reasons"]}
     assert ids == {"registry.requisite", "registry.domain", "registry.text_copy"}
     assert res["score"] == 100 and res["blacklisted_domains"] == ["joy-slots-kz.top"]
-    assert res["requisites"] == [{"type": "phone", "value": "+77016550742", "found": True, "tracks": ["pyramid"]}]
+    assert res["requisites"] == [{"type": "phone", "value": "+77016550742", "found": True, "list": "grey", "tracks": ["pyramid"]}]
 
 
 def test_unknown_requisite_is_reported_without_counts(inspector: Inspector) -> None:
     res = inspector.inspect(["+7 777 000 11 22"], [], None, [])
-    assert res["requisites"] == [{"type": "phone", "value": "+77770001122", "found": False, "tracks": []}]
+    assert res["requisites"] == [{"type": "phone", "value": "+77770001122", "found": False, "list": None, "tracks": []}]
     assert res["score"] == 0
 
 
@@ -218,7 +218,7 @@ def test_reports_reach_analyst_but_never_change_public_verdict(tmp_path: Path, p
 
     # Assert: токен расширения общий, поэтому жалобы не дают оговорить номер конкурента
     assert accepted == [True, True, True] and duplicate is False
-    assert verdict["score"] == 0 and verdict["requisites"] == [{"type": "phone", "value": FRESH, "found": False, "tracks": []}]
+    assert verdict["score"] == 0 and verdict["requisites"] == [{"type": "phone", "value": FRESH, "found": False, "list": None, "tracks": []}]
     assert queue[0]["value"] == FRESH and queue[0]["reporters"] == 3 and queue[0]["reports"] == 3
 
 

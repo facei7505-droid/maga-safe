@@ -114,4 +114,18 @@ def test_analyst_flow_end_to_end(server: str, browser) -> None:
     lead = report.locator(".r-lead").inner_text()
     assert "3 канала" in lead and "+77019998877" in lead and "приоритет" in lead
 
+    # аналитик подтверждает кейс: номер становится чёрным на «Реквизитах»
+    assert "серый" in page.locator("#bank-rows .list-badge").first.inner_text()
+    dialogs: list[str] = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    page.locator("#bank-rows button.link").first.click()
+    page.locator("select[aria-label='Статус кейса']").select_option("confirmed")
+    page.get_by_role("button", name="Сохранить статус").click()
+    page.wait_for_selector(".toast >> text=в чёрный список")
+    assert dialogs and "чёрный список" in dialogs[0]
+    page.keyboard.press("Escape")
+    page.locator(".tab[data-view=bank]").click()
+    page.wait_for_selector("#bank-rows .list-badge.black")
+    assert "+77019998877" in page.locator("#bank-rows tr", has=page.locator(".list-badge.black")).first.inner_text()
+
     assert errors == []

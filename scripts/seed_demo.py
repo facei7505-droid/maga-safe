@@ -6,6 +6,8 @@
   2. Один номер «оператора» (Kaspi-перевод) встречается в розыгрыше, казино и пирамиде,
      граф собирает их в один кейс на три трека.
   3. Фон: синтетические кампании и легальные посты (контроль ложных срабатываний).
+  4. Списки для банков: кейс номера оператора подтверждён (номер чёрный), честный розыгрыш магазина,
+     который детектор отправил на проверку, отклонён (номер «снят» и не блокируется).
 
 Запуск: PRUF_DEV_MODE=1 PRUF_DATA_DIR=data/demo python scripts/seed_demo.py --reset
 """
@@ -28,7 +30,9 @@ os.environ.setdefault("PRUF_DEV_MODE", "1")
 from pruf.config import ROOT, Settings
 from pruf.detect.classifier import TrackClassifier
 from pruf.detect.training import training_rows
+from pruf.graph.builder import CaseGraph
 from pruf.inspect import Inspector
+from pruf.lists import apply_case_decision
 from pruf.pipeline import Pruf, Submission, Upload
 from pruf.synth.generator import Generator
 from pruf.synth.screens import (
@@ -148,6 +152,47 @@ def seed_reports(pruf: Pruf) -> int:
     return n
 
 
+# Честный розыгрыш: бесплатное участие, но приз и номер в тексте — детектор ставит «средний», аналитик снимает.
+HONEST_GIVEAWAY = ("@dala_textile_kz", "🎁 РОЗЫГРЫШ от магазина «Дала Текстиль»! Разыгрываем 3 сертификата по 20 000 ₸. "
+                   "Условия: подписка и репост. Итоги 5 ноября в прямом эфире. Доставка приза бесплатно. "
+                   "Вопросы: +7 702 640 18 33")
+
+
+def seed_trusted_history(pruf: Pruf) -> int:
+    """Двое жалобщиков раньше уже жаловались на номера, которые аналитик подтвердил: у них есть история,
+    и их жалобы поднимают номер в очереди. Номера берём из чёрного списка демо-заливки."""
+    inspector = Inspector(pruf.db, pruf.settings.effective_hmac_key())
+    black = [r["display"] for r in pruf.db.requisite_feed(None, "medium", 50, 0, "black") if r["kind"] in ("phone", "kaspi_link")]
+    n = 0
+    for value in black:
+        for i in (0, 1):
+            reporter = hashlib.sha256(f"demo-reporter-{i}".encode()).hexdigest()[:24]
+            digest = hashlib.sha256(f"history|{value}|{i}".encode()).hexdigest()
+            n += inspector.report(reporter, "telegram", [value], [], digest, ["kaspi_transfer"])
+    return n
+
+
+def seed_decisions(pruf: Pruf) -> dict[str, int]:
+    """Решения аналитика для демо: кейс оператора подтверждён, честный розыгрыш отклонён."""
+    channel, text = HONEST_GIVEAWAY
+    honest = pruf.ingest(Submission(text=text, source="seed", channel=channel, external_id="honest00", label="legit"), allow_llm=False)
+    graph = CaseGraph(pruf.db)
+    graph.ensure(pruf.version)
+    hero = pruf.db.find_post_by_external_id("hero00")
+    plan = (("confirmed", hero["id"] if hero else None, "Сеть подтверждена: один номер в трёх схемах"),
+            ("dismissed", honest.get("post_id"), "Честный розыгрыш магазина: бесплатное участие"))
+    listed: dict[str, int] = {}
+    for status, post_id, note in plan:
+        key = graph.case_for_post(post_id) if post_id else None
+        case = graph.case(key) if key else None
+        if case is None:
+            _log(f"демо-решение {status}: кейс не найден, пропускаю")
+            continue
+        pruf.db.set_case_status(key, status, note, "seed")
+        listed[status] = apply_case_decision(pruf.db, key, case.post_ids, status, "seed", (c.key for c in graph.cases()))
+    return listed
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--reset", action="store_true", help="удалить PRUF_DATA_DIR перед заливкой")
@@ -178,6 +223,8 @@ def main() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     _log(f"жалобы из расширения: {seed_reports(pruf)}")
+    _log(f"списки: {seed_decisions(pruf)} (confirmed → чёрный, dismissed → снят)")
+    _log(f"история проверенных жалобщиков: {seed_trusted_history(pruf)} жалоб")
     hero = pruf.db.find_post_by_external_id("hero00")
     if hero:
         arts = pruf.db.artifacts_for_post(hero["id"])

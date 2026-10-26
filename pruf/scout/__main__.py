@@ -22,6 +22,7 @@ from pruf.scout.sources import DEMO_FIXTURE, FixtureSource, Throttle, ThrottledS
 DEMO_SEED = "iphone_razdacha_kz"  # «жалоба», с которой начинается демо
 TELEGRAM_INTERVAL = 1.5  # секунд между запросами к Telegram
 FIXTURE_INTERVAL = 0.0
+WEB_INTERVAL = 2.0  # t.me/s: не чаще одной страницы в 2 секунды
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--demo", action="store_true", help="офлайн-фикстура вместо Telegram")
     src.add_argument("--fixture", type=Path, help="свой JSON в формате демо-фикстуры")
     src.add_argument("--telegram", action="store_true", help="живой Telegram через Telethon (TG_API_ID, TG_API_HASH)")
+    src.add_argument("--web", action="store_true", help="открытые страницы t.me/s без аккаунта и ключей")
     ap.add_argument("--seed", action="append", default=[], help="канал-семя (@имя или t.me/имя), можно несколько")
     ap.add_argument("--max-channels", type=int, default=40)
     ap.add_argument("--max-depth", type=int, default=4)
@@ -48,10 +50,14 @@ def main(argv: list[str] | None = None) -> int:
         from pruf.scout.telegram import TelethonSource
 
         source, interval = TelethonSource.from_env(), TELEGRAM_INTERVAL
+    elif args.web:
+        from pruf.scout.public_web import PublicWebSource
+
+        source, interval = PublicWebSource(), WEB_INTERVAL
     else:
         source, interval = FixtureSource(args.fixture or DEMO_FIXTURE), FIXTURE_INTERVAL
     pruf = Pruf(load_settings())
-    seeds = args.seed or ([DEMO_SEED] if args.demo or not (args.fixture or args.telegram) else pruf.db.risky_channels())
+    seeds = args.seed or ([DEMO_SEED] if args.demo or not (args.fixture or args.telegram or args.web) else pruf.db.risky_channels())
     config = ScoutConfig(max_channels=args.max_channels, max_depth=args.max_depth, store=not args.no_store,
                          allow_llm=args.llm, keywords=() if args.no_keywords else ScoutConfig.keywords)
     scout = Scout(pruf, ThrottledSource(source, Throttle(interval, args.max_requests)), config)

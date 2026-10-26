@@ -1,6 +1,6 @@
 // ПРУФ Sentinel, service worker: запросы к API ПРУФ, чёрный список доменов в declarativeNetRequest,
 // пункт меню «Проверить в ПРУФ» и счётчики для popup. Токен хранится только здесь, в chrome.storage.
-importScripts("lib/extract.js");
+importScripts("lib/extract.js", "lib/i18n.js");
 
 const DEFAULT_API = "http://127.0.0.1:8000";
 const BLACKLIST_ALARM = "pruf-blacklist";
@@ -12,6 +12,11 @@ const REQUEST_TIMEOUT_MS = 8000;
 async function settings() {
   const s = await chrome.storage.local.get({ apiUrl: DEFAULT_API, token: "" });
   return { apiUrl: s.apiUrl.replace(/\/+$/, ""), token: s.token };
+}
+
+async function uiLang() {
+  const { lang } = await chrome.storage.local.get({ lang: "auto" });
+  return PrufI18n.pickLang(lang, self.navigator && navigator.language);
 }
 
 async function api(path, options = {}) {
@@ -114,35 +119,29 @@ async function allowOnce(domain) {
 }
 
 // ---------- меню «Проверить в ПРУФ» ----------
-function setupMenu() {
+async function setupMenu() {
+  const title = PrufI18n.t(await uiLang(), "menuCheck");
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: "pruf-check", title: "Проверить в ПРУФ", contexts: ["selection"] });
+    chrome.contextMenus.create({ id: "pruf-check", title, contexts: ["selection"] });
   });
-}
-
-function describe(result) {
-  const found = result.requisites.filter((r) => r.found);
-  if (!result.requisites.length) return "Не похоже на номер карты, телефон, IBAN или ссылку Kaspi.";
-  if (!found.length) return `${result.requisites[0].value}: в реестре ПРУФ не найден. Это не гарантия честности.`;
-  const tracks = found.flatMap((r) => r.tracks).join(", ");
-  return `${found[0].value}: встречался в постах с признаками схем${tracks ? " (" + tracks + ")" : ""}. Не переводите деньги.`;
 }
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
   if (info.menuItemId !== "pruf-check" || !info.selectionText) return;
   const selection = info.selectionText.slice(0, 200);
   const found = PrufExtract.extractRequisites(selection);
+  const lang = await uiLang();
   let message;
   try {
     const body = await api("/api/v1/inspect", {
       method: "POST",
       body: JSON.stringify({ requisites: found.length ? found : [selection.slice(0, 64)], links: [], cues: [] }),
     });
-    message = describe(body.data);
+    message = PrufI18n.describeCheck(body.data, lang);
   } catch (err) {
-    message = "Сервер ПРУФ недоступен: " + (err.message || err);
+    message = PrufI18n.t(lang, "serverDown", { error: err.message || err });
   }
-  chrome.notifications.create({ type: "basic", iconUrl: "icons/icon128.png", title: "ПРУФ: проверка реквизита", message });
+  chrome.notifications.create({ type: "basic", iconUrl: "icons/icon128.png", title: PrufI18n.t(lang, "notifyTitle"), message });
 });
 
 // ---------- сообщения от content.js, warning.html и popup ----------
@@ -186,6 +185,9 @@ chrome.runtime.onInstalled.addListener(() => {
   refreshBlacklist();
 });
 chrome.runtime.onStartup.addListener(refreshBlacklist);
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.lang) setupMenu(); // пункт меню на новом языке
+});
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === BLACKLIST_ALARM) refreshBlacklist();
 });

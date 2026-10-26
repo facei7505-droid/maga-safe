@@ -120,13 +120,16 @@ function statusControls(c, d) {
   }));
   const note = el("input", { placeholder: "Заметка аналитика", value: d.status.note || "", maxlength: 1000 });
   const save = el("button", { onclick: async () => {
+    const n = d.money_requisites || 0;
+    if (statusSel.value === "confirmed" && n && !confirm(`${n} реквизит(ов) кейса уйдут в чёрный список: банки увидят совет приостановить перевод. Подтвердить?`)) return;
     try {
-      await api("/api/v1/cases/" + encodeURIComponent(c.key), {
+      const { data } = await api("/api/v1/cases/" + encodeURIComponent(c.key), {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: statusSel.value, note: note.value || null }),
       });
       loadCases();
-      toast(`Кейс ${c.key}: ${STATUS[statusSel.value]}`, "ok");
+      const listed = { confirmed: ` · в чёрный список: ${data.requisites_listed}`, dismissed: ` · снято с подозрения: ${data.requisites_listed}` }[statusSel.value] || "";
+      toast(`Кейс ${c.key}: ${STATUS[statusSel.value]}${listed}`, "ok");
     } catch (err) { toast(err.message, "bad"); }
   } }, "Сохранить статус");
   const exportBtn = el("button", { class: "primary", onclick: () => exportCase(c.key) }, "Пакет доказательств (ZIP)");
@@ -407,11 +410,12 @@ function renderCheck(data, text) {
 async function loadBank() {
   const tbody = $("#bank-rows");
   try {
-    const { data } = await api("/api/v1/bank/requisites?limit=200");
+    const list = $("#bank-list").value;
+    const { data } = await api("/api/v1/bank/requisites?limit=200" + (list ? "&list=" + list : ""));
     state.bank = data;
     renderBank();
   } catch (err) {
-    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "err" }, err.message + " (нужен токен аналитика или банка)")));
+    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 8, class: "err" }, err.message + " (нужен токен аналитика или банка)")));
   }
   loadReports();
 }
@@ -425,20 +429,43 @@ async function loadReports() {
     $("#reports-total").textContent = `всего жалоб: ${meta.total}`;
     tbody.replaceChildren(...(data.length ? data.map((r) => el("tr", {},
       el("td", {}, el("span", { class: "req-type" }, REQ_TYPE[r.type] || r.type)), el("td", { class: "mono" }, r.value),
-      el("td", {}, el("b", {}, r.reporters)), el("td", {}, r.reports), el("td", {}, r.platforms.map((p) => PLATFORM_NAME[p] || p).join(", ")),
+      el("td", {}, el("b", {}, r.reporters)), el("td", {}, r.trusted_reporters ? el("b", { class: "trusted" }, r.trusted_reporters) : el("span", { class: "muted" }, "0")),
+      el("td", {}, r.trust.toFixed(2).replace(".", ",")), el("td", {}, r.reports), el("td", {}, r.platforms.map((p) => PLATFORM_NAME[p] || p).join(", ")),
       el("td", {}, r.in_registry ? "да" : el("span", { class: "muted" }, "новый")), el("td", {}, day(r.last_report))))
-      : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Жалоб пока нет"))]));
+      : [el("tr", {}, el("td", { colspan: 9, class: "muted" }, "Жалоб пока нет"))]));
   } catch (err) {
-    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "err" }, err.message)));
+    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 9, class: "err" }, err.message)));
   }
+}
+
+const LIST_NAME = { grey: "серый", black: "чёрный", cleared: "снят" };
+
+function listBadge(r) {
+  const due = r.list === "grey" && r.review_due ? (r.overdue ? " · срок прошёл " : " · до ") + day(r.review_due) : "";
+  return el("span", { class: "list-badge " + r.list + (r.overdue ? " overdue" : ""), title: r.list_reason + ". " + r.advice },
+    LIST_NAME[r.list] || r.list, due);
 }
 
 function renderBank() {
   const q = $("#bank-search").value.trim().toLowerCase();
   const rows = (state.bank || []).filter((r) => !q || r.value.toLowerCase().includes(q) || r.cases.join(" ").toLowerCase().includes(q));
+  rows.sort((a, b) => (b.list === "black") - (a.list === "black") || b.overdue - a.overdue); // чёрные и просроченные серые сверху
   $("#bank-rows").replaceChildren(...rows.map((r) => el("tr", {},
-    el("td", {}, el("span", { class: "req-type" }, REQ_TYPE[r.type] || r.type)), el("td", { class: "mono" }, r.value), el("td", {}, Math.round(r.max_score)), el("td", {}, r.posts),
+    el("td", {}, el("span", { class: "req-type" }, REQ_TYPE[r.type] || r.type)), el("td", { class: "mono" }, r.value), el("td", {}, listBadge(r)),
+    el("td", {}, Math.round(r.max_score)), el("td", {}, r.posts),
     el("td", {}, chips(r.tracks)), el("td", {}, r.cases.map((k) => el("button", { class: "link", onclick: () => openCase(k) }, k))), el("td", {}, day(r.last_seen)))));
+}
+
+async function bankCsv() {
+  try {
+    const list = $("#bank-list").value;
+    const res = await api("/api/v1/bank/requisites.csv" + (list ? "?list=" + list : ""), { raw: true });
+    const url = URL.createObjectURL(await res.blob());
+    const a = el("a", { href: url, download: "pruf_requisites.csv" });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast("Выгрузка скачана: номера в маске, ссылка HMAC", "ok");
+  } catch (err) { toast("Выгрузка не удалась: " + err.message, "bad"); }
 }
 
 async function bankCheck(ev) {
@@ -449,8 +476,10 @@ async function bankCheck(ev) {
   try {
     const { data } = await api("/api/v1/bank/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) });
     out.replaceChildren(data.found
-      ? el("div", { class: "verdict hit" }, el("b", {}, `⚠ ${REQ_TYPE[data.type] || data.type} ${data.value} встречается в ${data.posts} постах с признаками схем`),
-        el("div", {}, chips(data.tracks), ` · макс. балл ${Math.round(data.max_score)} · впервые ${day(data.first_seen)}`), el("div", { class: "muted" }, data.note))
+      ? el("div", { class: "verdict " + (data.list === "cleared" ? "clean" : "hit") },
+        el("b", {}, `${data.list === "cleared" ? "✓" : "⚠"} ${REQ_TYPE[data.type] || data.type} ${data.value} встречается в ${data.posts} постах с признаками схем`),
+        el("div", {}, listBadge(data), " ", chips(data.tracks), ` · макс. балл ${Math.round(data.max_score)} · впервые ${day(data.first_seen)}`),
+        el("div", {}, data.advice), el("div", { class: "muted" }, data.list_reason))
       : el("div", { class: "verdict clean" }, el("b", {}, `✓ ${REQ_TYPE[data.type] || data.type} не встречался в постах с признаками схем`), el("div", { class: "muted" }, "Отсутствие в реестре не гарантирует безопасность.")));
   } catch (err) { showError(out, err); }
 }
@@ -485,6 +514,8 @@ function init() {
   ["#f-level", "#f-track", "#f-status"].forEach((id) => $(id).addEventListener("change", loadCases));
   $("#f-search").addEventListener("input", renderQueue);
   $("#bank-search").addEventListener("input", renderBank);
+  $("#bank-list").addEventListener("change", loadBank);
+  $("#bank-csv").addEventListener("click", bankCsv);
   $("#bank-form").addEventListener("submit", bankCheck);
   $("#check-form").addEventListener("submit", submitCheck);
   $("#examples").replaceChildren(...Object.entries(EXAMPLES).map(([label, text]) =>

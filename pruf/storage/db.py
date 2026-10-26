@@ -88,6 +88,15 @@ CREATE TABLE IF NOT EXISTS case_status (
     updated_at TEXT NOT NULL,
     updated_by TEXT
 );
+CREATE TABLE IF NOT EXISTS requisite_status (
+    key TEXT NOT NULL,
+    case_key TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT,
+    PRIMARY KEY (key, case_key)
+);
+CREATE INDEX IF NOT EXISTS idx_requisite_status_case ON requisite_status(case_key);
 CREATE TABLE IF NOT EXISTS scout_channels (
     username TEXT PRIMARY KEY,
     title TEXT,
@@ -143,6 +152,11 @@ CREATE TABLE IF NOT EXISTS audit_log (
 """
 
 CASE_STATUSES = ("new", "in_review", "confirmed", "dismissed")
+# Решения аналитика по реквизиту (pruf/lists.py): подтверждённый кейс делает номер чёрным, отклонённый снимает;
+# без решений номер серый. Чёрный побеждает: номер из подтверждённого кейса не снимается другим кейсом.
+_LIST_JOIN = ("LEFT JOIN (SELECT key AS dkey, MAX(decision='confirmed') AS black, MAX(decision='dismissed') AS cleared, "
+              "GROUP_CONCAT(case_key || ':' || decision) AS decided FROM requisite_status GROUP BY key) d ON d.dkey=r.key")
+_LIST_EXPR = "CASE WHEN d.black THEN 'black' WHEN d.cleared THEN 'cleared' ELSE 'grey' END"
 
 
 def utcnow() -> str:
@@ -320,8 +334,9 @@ class Database:
     def lookup_requisite(self, key: str) -> dict[str, Any] | None:
         return self._one(
             "SELECT r.kind, r.display, r.first_seen, COUNT(DISTINCT p.id) AS posts, MAX(p.score) AS max_score, "
-            "GROUP_CONCAT(DISTINCT p.track) AS tracks FROM requisites r JOIN post_requisites pr ON pr.requisite_id=r.id "
-            "JOIN posts p ON p.id=pr.post_id WHERE r.key=? AND p.level IN ('medium','high') GROUP BY r.id", (key,))
+            f"GROUP_CONCAT(DISTINCT p.track) AS tracks, MIN(p.created_at) AS grey_since, {_LIST_EXPR} AS list, d.decided "
+            f"FROM requisites r JOIN post_requisites pr ON pr.requisite_id=r.id JOIN posts p ON p.id=pr.post_id {_LIST_JOIN} "
+            "WHERE r.key=? AND p.level IN ('medium','high') GROUP BY r.id", (key,))
 
     def requisites_for_post(self, post_id: int) -> list[dict[str, Any]]:
         return self._all("SELECT r.id, r.kind, r.key, r.display FROM requisites r JOIN post_requisites pr ON pr.requisite_id=r.id WHERE pr.post_id=?", (post_id,))
@@ -329,7 +344,8 @@ class Database:
     def all_post_requisites(self) -> list[dict[str, Any]]:
         return self._all("SELECT pr.post_id, r.id, r.kind, r.key, r.display FROM post_requisites pr JOIN requisites r ON r.id=pr.requisite_id")
 
-    def requisite_feed(self, since: str | None, min_level: str, limit: int, offset: int) -> list[dict[str, Any]]:
+    def requisite_feed(self, since: str | None, min_level: str, limit: int, offset: int,
+                       list_name: str | None = None) -> list[dict[str, Any]]:
         levels = {"low": ("low", "medium", "high"), "medium": ("medium", "high"), "high": ("high",)}[min_level]
         marks = ",".join("?" * len(levels))
         params: list[Any] = list(levels)
@@ -337,14 +353,41 @@ class Database:
         if since:
             where += " AND r.first_seen >= ?"
             params.append(since)
+        if list_name:
+            where += f" AND {_LIST_EXPR} = ?"
+            params.append(list_name)
         params.extend([limit, offset])
         return self._all(
             "SELECT r.id, r.kind, r.display, r.key, r.first_seen, MAX(p.score) AS max_score, COUNT(DISTINCT p.id) AS posts, "
-            "GROUP_CONCAT(DISTINCT p.track) AS tracks, MAX(p.posted_at) AS last_seen "
-            f"FROM requisites r JOIN post_requisites pr ON pr.requisite_id=r.id JOIN posts p ON p.id=pr.post_id WHERE {where} "
-            "GROUP BY r.id ORDER BY max_score DESC, posts DESC LIMIT ? OFFSET ?",
+            f"GROUP_CONCAT(DISTINCT p.track) AS tracks, MAX(p.posted_at) AS last_seen, MIN(p.created_at) AS grey_since, "
+            f"{_LIST_EXPR} AS list, d.decided "
+            f"FROM requisites r JOIN post_requisites pr ON pr.requisite_id=r.id JOIN posts p ON p.id=pr.post_id {_LIST_JOIN} "
+            f"WHERE {where} GROUP BY r.id ORDER BY max_score DESC, posts DESC LIMIT ? OFFSET ?",
             params,
         )
+
+    def drop_stale_decisions(self, keys: Sequence[str], live_cases: set[str]) -> int:
+        """Убрать решения по этим реквизитам от кейсов, которых нет в текущем графе (слились или распались)."""
+        if not keys:
+            return 0
+        marks = ",".join("?" * len(keys))
+        rows = self._all(f"SELECT key, case_key FROM requisite_status WHERE key IN ({marks})", list(keys))
+        stale = [(r["key"], r["case_key"]) for r in rows if r["case_key"] not in live_cases]
+        with self._lock, self._conn:
+            self._conn.executemany("DELETE FROM requisite_status WHERE key=? AND case_key=?", stale)
+        return len(stale)
+
+    def set_case_decision(self, case_key: str, keys: Sequence[str], decision: str | None, actor: str) -> None:
+        """Решение аналитика по кейсу переносится на его реквизиты; прежнее решение этого кейса заменяется."""
+        if decision not in (None, "confirmed", "dismissed"):
+            raise ValueError("недопустимое решение")
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM requisite_status WHERE case_key=?", (case_key,))
+            if decision:
+                now = utcnow()
+                self._conn.executemany(
+                    "INSERT INTO requisite_status (key, case_key, decision, updated_at, updated_by) VALUES (?,?,?,?,?)",
+                    [(key, case_key, decision, now, actor) for key in keys])
 
     def add_link(self, post_id: int, url: str, domain: str, resolved: str | None) -> None:
         self._exec("INSERT OR IGNORE INTO links (post_id, url, domain, resolved) VALUES (?,?,?,?)", (post_id, url, domain, resolved))
@@ -403,14 +446,27 @@ class Database:
                                    [(cur.lastrowid, kind, key, display) for kind, key, display in requisites])
         return True
 
-    def reported_requisites(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Реквизиты из жалоб для аналитика: сколько людей, с каких площадок, есть ли уже в реестре."""
+    def reported_requisites(self, limit: int = 200, trusted_min: float = 0.7) -> list[dict[str, Any]]:
+        """Реквизиты из жалоб для аналитика: сколько людей, с каких площадок, есть ли уже в реестре и сколько
+        жалоб от проверенных людей. Надёжность жалобщика (c+1)/(c+d+2): c — его номера, ставшие чёрными,
+        d — снятые. Проверенный: надёжность ≥ trusted_min и хотя бы один подтверждённый номер. Анонимный id
+        жалобщика меняется раз в месяц, поэтому и история доверия живёт месяц: это плата за приватность."""
         return self._all(
+            "WITH st AS (SELECT key, MAX(decision='confirmed') AS black, MAX(decision='dismissed') AS cleared "
+            "FROM requisite_status GROUP BY key), "
+            "hist AS (SELECT r.reporter, COUNT(DISTINCT CASE WHEN st.black THEN rr.key END) AS c, "
+            "COUNT(DISTINCT CASE WHEN st.cleared AND NOT st.black THEN rr.key END) AS d "
+            "FROM user_reports r JOIN report_requisites rr ON rr.report_id=r.id LEFT JOIN st ON st.key=rr.key GROUP BY r.reporter), "
+            "trust AS (SELECT reporter, c, (c + 1.0) / (c + d + 2.0) AS t FROM hist), "
+            "pairs AS (SELECT DISTINCT rr.key, r.reporter FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id), "
+            "per_key AS (SELECT p.key, AVG(t.t) AS trust, SUM(t.t >= ? AND t.c >= 1) AS trusted_reporters "
+            "FROM pairs p JOIN trust t ON t.reporter=p.reporter GROUP BY p.key) "
             "SELECT rr.kind, rr.key, rr.display, COUNT(DISTINCT r.reporter) AS reporters, COUNT(DISTINCT r.id) AS reports, "
             "GROUP_CONCAT(DISTINCT r.platform) AS platforms, MAX(r.ts) AS last_report, "
-            "EXISTS (SELECT 1 FROM requisites q WHERE q.key=rr.key) AS in_registry "
-            "FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id GROUP BY rr.key "
-            "ORDER BY reporters DESC, last_report DESC LIMIT ?", (limit,))
+            "EXISTS (SELECT 1 FROM requisites q WHERE q.key=rr.key) AS in_registry, "
+            "MAX(k.trusted_reporters) AS trusted_reporters, MAX(k.trust) AS trust "
+            "FROM report_requisites rr JOIN user_reports r ON r.id=rr.report_id JOIN per_key k ON k.key=rr.key GROUP BY rr.key "
+            "ORDER BY trusted_reporters DESC, reporters DESC, last_report DESC LIMIT ?", (trusted_min, limit))
 
     def report_count(self) -> int:
         row = self._one("SELECT COUNT(*) AS n FROM user_reports")

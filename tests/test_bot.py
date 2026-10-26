@@ -17,6 +17,7 @@ from pruf.bot.telegram import (
     _best_photo,
     format_result,
 )
+from pruf.bot.texts import reply_lang, say
 from pruf.pipeline import Pruf, Submission, Upload
 from tests.helpers import CASINO_RU, KASPI_PHONE, LOTTERY_RU, make_settings
 
@@ -77,6 +78,58 @@ def test_scam_text_gets_risk_and_quotes_without_storing(pruf: Pruf) -> None:
     assert "«" in reply.text  # цитата из поста
     assert "не вердикт" in reply.text
     assert pruf.db.count_posts() == posts_before  # бот только читает реестр
+
+
+LOTTERY_KK = "Ұтыс ойыны! iPhone 15 ұтып алыңыз. Қатысу 1000 теңге, каспиге аударыңыз {phone}. Жеңімпаз жұмада"
+
+
+def test_kazakh_post_gets_kazakh_reply(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+
+    # Act
+    reply = BotLogic(pruf, api, MAX_BYTES).handle(_msg(LOTTERY_KK.format(phone=KASPI_PHONE)))
+
+    # Assert
+    assert reply is not None and "Тәуекел: жоғары" in reply.text
+    assert "ақылы ұтыс ойыны" in reply.text
+    assert "Бейтаныс ұйымдастырушыларға ақша аудармаңыз" in reply.text
+    assert "Риск:" not in reply.text
+
+
+def test_start_with_kazakh_telegram_language_gets_kazakh_help(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+
+    # Act
+    BotLogic(pruf, api, MAX_BYTES).handle(_msg("/start", **{"from": {"id": 5, "language_code": "kk"}}))
+
+    # Assert
+    assert api.sent == [(42, say("kk", "help"), None)]
+
+
+def test_russian_post_from_kazakh_user_stays_russian(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+
+    # Act
+    reply = BotLogic(pruf, api, MAX_BYTES).handle(
+        _msg(LOTTERY_RU.format(phone=KASPI_PHONE), **{"from": {"id": 5, "language_code": "kk"}}))
+
+    # Assert
+    assert reply is not None and "Риск: высокий" in reply.text
+
+
+@pytest.mark.parametrize(("text", "user_lang", "expected"), [
+    ("Ұтыс ойыны! Қатысу тегін", None, "kk"),
+    ("Розыгрыш, участие 2000 тг", "kk", "ru"),
+    ("Розыгрыш с опечаткой і", None, "ru"),  # одна казахская буква не делает текст казахским
+    ("", "kk-KZ", "kk"),
+    ("", "ru", "ru"),
+    ("", None, "ru"),
+])
+def test_reply_lang(text: str, user_lang: str | None, expected: str) -> None:
+    assert reply_lang(text, user_lang) == expected
 
 
 def test_known_requisite_from_other_track_is_reported(pruf: Pruf) -> None:

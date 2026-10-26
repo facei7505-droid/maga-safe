@@ -71,3 +71,4 @@ test("payload holds no post text", async () => {
 test("plain chat message is not sent to the server", async () => {
   assert.equal(X.worthChecking(await X.buildPayload("Привет, как дела? Встречаемся вечером у фонтана", [])), false);
 });
+
