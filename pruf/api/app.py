@@ -48,6 +48,7 @@ from pruf.normalize.ocr import ocr_available
 from pruf.normalize.qr import qr_available
 from pruf.normalize.requisites import extract_requisites
 from pruf.pipeline import Pruf, Submission, Upload
+from pruf.quality import quality_report
 from pruf.registry.forensics import ela_heatmap_png
 from pruf.registry.hashing import open_image
 from pruf.storage.db import CASE_STATUSES
@@ -467,7 +468,8 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
                    "images_indexed": len(p.registry.images), "texts_indexed": len(p.registry.texts),
                    "capabilities": capabilities(p), "state": saved,
                    # посты демо-заливки (scripts/seed_demo.py): дашборд честно говорит, что они придуманы
-                   "demo_posts": p.db.count_posts_from("seed"), "demo_error": state.get("seed_error")})
+                   "demo_posts": p.db.count_posts_from("seed"), "demo_error": state.get("seed_error"),
+                   "quality": quality_report(p.settings.model_path)})
 
     @app.get("/api/v1/overview")
     def overview_view(actor: str = Depends(analyst)):

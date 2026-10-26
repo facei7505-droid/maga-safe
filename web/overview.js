@@ -12,6 +12,7 @@ export async function loadOverview(openCase) {
     root.replaceChildren(
       kpis(s, o),
       surgesBlock(o.surges, openCase),
+      s.quality ? qualityBlock(s.quality) : null,
       el("div", { class: "ov-grid" },
         panel("Посты по дням и уровню риска", dailyChart(o.daily), levelLegend()),
         panel("Треки (посты со средним и высоким риском)", trackBars(o.tracks)),
@@ -36,6 +37,29 @@ function kpis(s, o) {
     tile(s.cases, "кейсов для аналитика", `${o.case_statuses.new || 0} новых`),
     tile(s.images_indexed + s.texts_indexed, "пруфов в реестре", `${s.images_indexed} скринов · ${s.texts_indexed} текстов`),
     tile(o.surges.length, "ранних сигналов", "реквизит в 3+ каналах за 72 ч", o.surges.length ? "warn" : ""),
+  );
+}
+
+const pct = (v, digits = 0) => `${(v * 100).toFixed(digits).replace(".", ",")}%`;
+
+// «Как мы мерили»: цифры на свежих реальных постах, которых система не видела (pruf/quality.py)
+function qualityBlock(q) {
+  const main = q.rows.find((r) => r.main) || q.rows[0];
+  const m = q.model || {};
+  const onServer = m.prod
+    ? `На сервере модель, обученная на всех ${m.real_posts.toLocaleString("ru-RU")} реальных постах; её собственный замер будет на следующем свежем наборе.`
+    : "На сервере модель без реальных постов (models/prod не поставлена) — ориентир вторая строка.";
+  return el("section", { class: "panel quality" },
+    el("h3", {}, "Как мы мерили качество"),
+    el("p", { class: "quality-lead" },
+      el("b", {}, `Из 100 схем находит ${Math.round(main.recall * 100)}`), ", из 100 обычных постов ложно тревожит ",
+      el("b", {}, String(Math.round(main.fpr * 100))), "."),
+    el("div", { class: "quality-scroll" }, el("table", { class: "table compact" },
+      el("thead", {}, el("tr", {}, el("th", {}, `Свежие реальные посты ${q.set}`), el("th", {}, "Точность"), el("th", {}, "Полнота"), el("th", {}, "Ложные тревоги"))),
+      el("tbody", {}, q.rows.map((r) => el("tr", { class: r.main ? "main-row" : "" },
+        el("td", {}, r.name), el("td", {}, pct(r.precision)), el("td", {}, pct(r.recall)), el("td", {}, pct(r.fpr, 1))))))),
+    el("p", { class: "muted small" },
+      `${q.posts} постов из ${q.channels} каналов, которых система раньше не видела; разметка — ${q.labels}. Набор измерен один раз и только потом ушёл в обучение. Без Claude-арбитра. ${onServer}`),
   );
 }
 

@@ -398,3 +398,9 @@ img.broken { visibility: hidden; }
 .tour p { margin: 6px 0 10px; color: var(--ink-2); }
 .tour-actions { gap: 8px; justify-content: flex-end; }
 @media (max-width: 860px) { .tour { right: 16px; bottom: 16px; } .tour-btn { order: 2; } }
+
+/* «Как мы мерили» на обзоре */
+.quality { margin: 16px 0; }
+.quality-lead { font-size: 16px; margin: 0 0 10px; }
+.quality .main-row td { font-weight: 600; }
+.quality-scroll { overflow-x: auto; }

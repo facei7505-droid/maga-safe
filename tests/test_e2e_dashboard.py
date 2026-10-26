@@ -71,6 +71,8 @@ def test_analyst_flow_end_to_end(server: str, browser) -> None:
     page.goto(server, wait_until="networkidle")
     assert page.locator(".kpi").count() == 5
     assert "+77019998877" in page.locator(".surge").first.inner_text()
+    # карточка «Как мы мерили»: цифры на свежих реальных постах видны жюри без README
+    assert "Из 100 схем находит 83" in page.locator(".quality").inner_text()
 
     # кейс из раннего сигнала: граф, семейство пруфов, подсветка признаков
     page.locator(".surge button").first.click()
