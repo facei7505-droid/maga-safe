@@ -8,6 +8,8 @@
     $("checked").textContent = s.stats.checked || 0;
     $("threats").textContent = s.stats.threats || 0;
     $("blocked").textContent = s.stats.blocked || 0;
+    $("copyWarnings").textContent = s.stats.copyWarnings || 0;
+    $("reported").textContent = s.stats.reported || 0;
     const bl = s.blacklist;
     $("blacklist").textContent = bl.error
       ? "Чёрный список: ошибка обновления (" + bl.error + ")"

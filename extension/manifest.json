@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "ПРУФ Sentinel",
-  "version": "0.1.0",
-  "description": "Предупреждает о признаках платных розыгрышей, скрытой рекламы казино и финансовых пирамид в Telegram Web и Instagram.",
+  "version": "0.2.0",
+  "description": "Предупреждает о признаках платных розыгрышей, скрытой рекламы казино и финансовых пирамид в Telegram Web, WhatsApp Web и Instagram.",
   "permissions": ["storage", "alarms", "contextMenus", "notifications", "declarativeNetRequest"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
-      "matches": ["https://web.telegram.org/*", "https://www.instagram.com/*"],
+      "matches": ["https://web.telegram.org/*", "https://www.instagram.com/*", "https://web.whatsapp.com/*"],
       "js": ["lib/extract.js", "content.js"],
       "run_at": "document_idle"
     }

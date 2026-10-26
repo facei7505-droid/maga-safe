@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import threading
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -38,7 +39,7 @@ from pruf.bot.telegram import BotLogic, HttpTelegramApi
 from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
 from pruf.graph.builder import CaseGraph, artifact_timeline
-from pruf.inspect import Inspector
+from pruf.inspect import REPORT_PLATFORMS, Inspector
 from pruf.normalize.audio import transcribe, whisper_available
 from pruf.normalize.ocr import ocr_available
 from pruf.normalize.requisites import extract_requisites
@@ -102,6 +103,21 @@ class InspectIn(BaseModel):
         return items
 
 
+REPORTS_PER_MINUTE_PER_IP = 5
+
+
+class ReportIn(InspectIn):
+    """Жалоба «Сообщить в ПРУФ»: то же извлечённое, что для проверки, плюс площадка и случайный id установки."""
+    text_hash: str = Field(pattern="^[0-9a-f]{64}$")
+    platform: str = Field(default="other", max_length=16)
+    install_id: str = Field(min_length=8, max_length=64, pattern="^[A-Za-z0-9-]+$")
+
+    @field_validator("platform")
+    @classmethod
+    def _platform(cls, value: str) -> str:
+        return value if value in REPORT_PLATFORMS else "other"
+
+
 class CaseUpdate(BaseModel):
     status: str
     note: str | None = Field(default=None, max_length=2000)
@@ -110,6 +126,7 @@ class CaseUpdate(BaseModel):
 def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> FastAPI:
     settings = settings or load_settings()
     limiter = RateLimiter(settings.rate_limit_per_minute)
+    report_limiter = RateLimiter(REPORTS_PER_MINUTE_PER_IP)  # токен расширения общий: жалобы ограничиваем по IP
     state: dict[str, Any] = {}
     bot_lock = threading.Lock()
 
@@ -426,6 +443,29 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     def inspect_post(body: InspectIn, actor: str = Depends(extension)):
         """Риск поста по извлечённым признакам; текст поста сюда не приходит и ничего не сохраняется."""
         return ok(inspector().inspect(body.requisites, body.links, body.text_hash, body.cues))
+
+    @app.post("/api/v1/reports")
+    def report_post(body: ReportIn, request: Request, actor: str = Depends(extension)):
+        """Жалоба пользователя. Кто жалуется, хранится только как HMAC от токена и id установки."""
+        report_limiter.check(f"report:{request.client.host if request.client else 'unknown'}")
+        # Месячная эпоха: жалобы одного человека не склеиваются в профиль дольше месяца
+        epoch = time.strftime("%Y-%m", time.gmtime())
+        reporter = hmac.new(core().settings.effective_hmac_key(), f"{actor}|{body.install_id}|{epoch}".encode(), "sha256").hexdigest()[:24]
+        try:
+            accepted = inspector().report(reporter, body.platform, body.requisites, body.links, body.text_hash, body.cues)
+        except ValueError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
+        core().db.audit(actor, "user_report", body.platform)
+        return ok({"accepted": accepted})
+
+    @app.get("/api/v1/reports")
+    def reports_list(limit: int = Query(default=100, ge=1, le=500), actor: str = Depends(analyst)):
+        """Реквизиты из жалоб: сначала те, на которые жаловалось больше разных людей."""
+        db = core().db
+        rows = [{"type": r["kind"], "value": r["display"], "reporters": r["reporters"], "reports": r["reports"],
+                 "platforms": sorted(set((r["platforms"] or "").split(",")) - {""}), "last_report": r["last_report"],
+                 "in_registry": bool(r["in_registry"])} for r in db.reported_requisites(limit)]
+        return ok(rows, total=db.report_count())
 
     @app.get("/api/v1/blacklist/domains")
     def blacklist(actor: str = Depends(extension)):

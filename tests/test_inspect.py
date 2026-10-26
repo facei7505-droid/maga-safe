@@ -128,6 +128,20 @@ def test_extension_cue_ids_are_known_to_server() -> None:
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="нужен Node.js")
+def test_extension_offline_verdict_matches_server_for_cues(inspector: Inspector) -> None:
+    # Без сервера расширение считает балл само: веса, трек и заголовок должны совпасть с сервером
+    cases = [["income_promise", "referral", "kaspi_transfer"], ["giveaway", "paid_entry", "urgency"], ["casino", "big_win"], ["urgency"]]
+    script = ("const X=require(process.argv[1]);console.log(JSON.stringify(JSON.parse(process.argv[2]).map(c=>X.localVerdict(c))))")
+    out = subprocess.run(["node", "-e", script, str(ROOT / "extension/lib/extract.js"), json.dumps(cases)],
+                         capture_output=True, text=True, check=True, timeout=30).stdout
+    for cues, local in zip(cases, json.loads(out)):
+        server = inspector.inspect([], [], None, cues)
+        for field in ("score", "level", "level_label", "track", "show_banner", "title"):
+            assert local[field] == server[field], (cues, field)
+        assert local["reasons"] == server["reasons"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="нужен Node.js")
 def test_extension_unit_tests_pass() -> None:
     res = subprocess.run(["node", "--test", *map(str, sorted((ROOT / "extension/test").glob("*.test.js")))],
                          capture_output=True, text=True, timeout=60)
@@ -180,3 +194,95 @@ def test_scout_view_lists_channels_and_edges(tmp_path: Path, pruf: Pruf) -> None
         data = client.get("/api/v1/scout").json()["data"]
     assert data["channels"][0]["username"] == "kassa_demo"
     assert data["edges"][0]["via"] == "requisite"
+
+
+# ---------- жалобы пользователей ----------
+FRESH = "+77051112233"  # номер, которого нет в реестре
+
+
+def _report(client: TestClient, install_id: str, digest: str = "a" * 64, **extra):
+    body = {"requisites": [FRESH], "links": ["https://new-casino-kz.top/x"], "text_hash": digest, "cues": ["casino"],
+            "platform": "whatsapp", "install_id": install_id, **extra}
+    return client.post("/api/v1/reports", json=body)
+
+
+def test_reports_reach_analyst_but_never_change_public_verdict(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf) as client:
+        # Arrange: трое «разных людей» жалуются на номер, один нажал кнопку дважды
+        accepted = [_report(client, f"install-{i}").json()["data"]["accepted"] for i in (1, 2, 3)]
+        duplicate = _report(client, "install-3").json()["data"]["accepted"]
+
+        # Act
+        verdict = client.post("/api/v1/inspect", json={"requisites": [FRESH], "links": [], "cues": []}).json()["data"]
+        queue = client.get("/api/v1/reports").json()["data"]
+
+    # Assert: токен расширения общий, поэтому жалобы не дают оговорить номер конкурента
+    assert accepted == [True, True, True] and duplicate is False
+    assert verdict["score"] == 0 and verdict["requisites"] == [{"type": "phone", "value": FRESH, "found": False, "tracks": []}]
+    assert queue[0]["value"] == FRESH and queue[0]["reporters"] == 3 and queue[0]["reports"] == 3
+
+
+def test_reports_are_rate_limited_per_ip(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf) as client:
+        codes = [_report(client, f"install-{i}", digest=f"{i:064x}").status_code for i in range(7)]
+
+    assert codes[:5] == [200] * 5 and codes[5:] == [429, 429]
+
+
+def test_report_stores_date_and_keyed_hash_only(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf) as client:
+        _report(client, "install-1")
+        row = pruf.db._one("SELECT ts, text_hash, reporter FROM user_reports")
+
+    assert len(row["ts"]) == 10  # только дата
+    assert row["text_hash"] != "a" * 64 and len(row["reporter"]) == 24
+
+
+def test_report_requires_something_to_report(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf) as client:
+        resp = _report(client, "install-1", requisites=[], links=[], cues=[])
+
+    assert resp.status_code == 422
+
+
+def test_analyst_sees_reported_requisites_without_reporters(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf) as client:
+        _report(client, "install-1")
+        _report(client, "install-2", digest="b" * 64, platform="telegram", requisites=["+7 701 655 07 42"])
+
+        body = client.get("/api/v1/reports").json()
+
+    assert body["meta"]["total"] == 2
+    rows = {r["value"]: r for r in body["data"]}
+    assert rows["+77051112233"]["platforms"] == ["whatsapp"] and rows["+77051112233"]["in_registry"] is False
+    assert rows["+77016550742"]["in_registry"] is True  # этот номер уже в реестре из постов
+    assert all("reporter" not in r and "key" not in r for r in body["data"])
+
+
+def test_report_needs_extension_token_outside_dev(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf, dev_mode=False, extension_tokens=("ext:secret",), analyst_token="an") as client:
+        denied = _report(client, "install-1")
+        allowed = client.post("/api/v1/reports", headers={"Authorization": "Bearer secret"},
+                              json={"requisites": [FRESH], "links": [], "text_hash": "c" * 64, "cues": [], "install_id": "install-9"})
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200 and allowed.json()["data"]["accepted"] is True
+
+
+def test_demo_reports_bring_new_whatsapp_number_to_analyst(pruf: Pruf) -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("seed_demo", ROOT / "scripts/seed_demo.py")
+    seed = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(seed)
+
+    assert seed.seed_reports(pruf) == 8
+    rows = {r["display"]: r for r in pruf.db.reported_requisites()}
+    assert rows["+77084001290"]["reporters"] == 3 and not rows["+77084001290"]["in_registry"]  # новый номер из WhatsApp
+
+
+def test_report_with_only_garbage_is_rejected(tmp_path: Path, pruf: Pruf) -> None:
+    with _client(tmp_path, pruf) as client:
+        resp = _report(client, "install-1", requisites=["не номер"], links=[], cues=["no_such_cue"])
+
+    assert resp.status_code == 422

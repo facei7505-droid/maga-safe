@@ -18,7 +18,7 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
     """Явные настройки без зависимости от переменных окружения."""
     base = dict(
         data_dir=tmp_path / "data", model_path=tmp_path / "no-model" / "clf.joblib", analyst_token="",
-        bank_tokens=(), dev_mode=True, hmac_key=TEST_HMAC_KEY, anthropic_api_key="", resolve_links=False,
+        bank_tokens=(), bank_allow_analyst=False, dev_mode=True, hmac_key=TEST_HMAC_KEY, anthropic_api_key="", resolve_links=False,
         max_upload_bytes=8 * 1024 * 1024, rate_limit_per_minute=1000,
     )
     base.update(overrides)

@@ -22,6 +22,8 @@ class Settings:
     analyst_token: str = field(default_factory=lambda: os.environ.get("PRUF_ANALYST_TOKEN", ""))
     bank_tokens: tuple[str, ...] = field(default_factory=lambda: _env_list("PRUF_BANK_TOKENS"))
     extension_tokens: tuple[str, ...] = field(default_factory=lambda: _env_list("PRUF_EXTENSION_TOKENS"))
+    # Демо без банков: токен аналитика открывает ленту реквизитов, пока PRUF_BANK_TOKENS не задан. Только явно.
+    bank_allow_analyst: bool = field(default_factory=lambda: os.environ.get("PRUF_BANK_ALLOW_ANALYST", "") == "1")
     dev_mode: bool = field(default_factory=lambda: os.environ.get("PRUF_DEV_MODE", "") == "1")
     hmac_key: str = field(default_factory=lambda: os.environ.get("PRUF_HMAC_KEY", ""))
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))

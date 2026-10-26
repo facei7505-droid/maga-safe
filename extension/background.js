@@ -44,6 +44,33 @@ async function inspect(payload) {
   return body.data;
 }
 
+// Случайный id установки: сервер видит только HMAC от него и не может узнать человека,
+// но отличает жалобы разных людей от повторных нажатий одного
+async function installId() {
+  const { installId: id } = await chrome.storage.local.get({ installId: "" });
+  if (id) return id;
+  const fresh = crypto.randomUUID();
+  await chrome.storage.local.set({ installId: fresh });
+  return fresh;
+}
+
+async function report(payload, platform) {
+  const body = await api("/api/v1/reports", {
+    method: "POST",
+    body: JSON.stringify({ ...payload, platform, install_id: await installId() }),
+  });
+  if (body.data.accepted) await bump("reported");
+  return body.data;
+}
+
+async function checkRequisites(requisites) {
+  const clean = (Array.isArray(requisites) ? requisites : []).filter((r) => typeof r === "string").slice(0, 10).map((r) => r.slice(0, 64));
+  if (!clean.length) throw new Error("нет реквизитов");
+  const body = await api("/api/v1/inspect", { method: "POST", body: JSON.stringify({ requisites: clean, links: [], cues: [] }) });
+  if (body.data.requisites.some((r) => r.found)) await bump("copyWarnings");
+  return body.data;
+}
+
 // ---------- чёрный список доменов ----------
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -119,9 +146,28 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
 });
 
 // ---------- сообщения от content.js, warning.html и popup ----------
+const CONTENT_HOSTS = new Set(["web.telegram.org", "web.whatsapp.com", "www.instagram.com"]);
+const FROM_CONTENT = new Set(["inspect", "report", "checkRequisites"]);
+
+// Сообщения только из своего расширения: от content script на трёх площадках или со своих страниц
+function trustedSender(type, sender) {
+  if (sender.id !== chrome.runtime.id) return false;
+  if (!sender.tab) return !FROM_CONTENT.has(type); // popup и warning.html
+  const extPage = (sender.url || "").startsWith(chrome.runtime.getURL(""));
+  if (extPage) return type === "allow" || type === "blocked"; // warning.html открыт во вкладке
+  try {
+    return FROM_CONTENT.has(type) && CONTENT_HOSTS.has(new URL(sender.url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || !trustedSender(msg.type, sender)) return false;
   const handlers = {
     inspect: () => inspect(msg.payload),
+    report: () => report(msg.payload, msg.platform),
+    checkRequisites: () => checkRequisites(msg.requisites),
     allow: () => allowOnce(msg.domain),
     blocked: () => bump("blocked"),
     refresh: () => refreshBlacklist(),

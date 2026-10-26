@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import random
 import shutil
@@ -27,6 +28,7 @@ os.environ.setdefault("PRUF_DEV_MODE", "1")
 from pruf.config import ROOT, Settings
 from pruf.detect.classifier import TrackClassifier
 from pruf.detect.training import training_rows
+from pruf.inspect import Inspector
 from pruf.pipeline import Pruf, Submission, Upload
 from pruf.synth.generator import Generator
 from pruf.synth.screens import (
@@ -126,6 +128,26 @@ def seed_hero(pruf: Pruf, rng: random.Random, shift: timedelta = timedelta()) ->
     return counts
 
 
+# Жалобы из расширения: номер оператора из реестра и новый номер пирамиды из WhatsApp-групп, которого
+# в постах ещё нет. Так видно, что пользователи приносят реквизиты, до которых разведчик не дошёл.
+DEMO_REPORTS = (
+    (OPERATOR_PHONE, ("telegram", "telegram", "whatsapp", "instagram"), ["giveaway", "paid_entry", "kaspi_transfer"]),
+    ("+7 708 400 12 90", ("whatsapp", "whatsapp", "whatsapp"), ["income_promise", "referral", "kaspi_transfer"]),
+    ("+7 771 555 23 41", ("telegram",), ["casino", "promo_code"]),
+)
+
+
+def seed_reports(pruf: Pruf) -> int:
+    inspector = Inspector(pruf.db, pruf.settings.effective_hmac_key())
+    n = 0
+    for phone, platforms, cues in DEMO_REPORTS:
+        for i, platform in enumerate(platforms):
+            reporter = hashlib.sha256(f"demo-reporter-{i}".encode()).hexdigest()[:24]
+            digest = hashlib.sha256(f"{phone}|{i}".encode()).hexdigest()
+            n += inspector.report(reporter, platform, [phone], [], digest, cues)
+    return n
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--reset", action="store_true", help="удалить PRUF_DATA_DIR перед заливкой")
@@ -155,6 +177,7 @@ def main() -> None:
         _log(f"вау-сценарий: {HERO_APPEARANCES} появлений пруфа, {HERO_EDITED} с правкой суммы, треки {counts}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    _log(f"жалобы из расширения: {seed_reports(pruf)}")
     hero = pruf.db.find_post_by_external_id("hero00")
     if hero:
         arts = pruf.db.artifacts_for_post(hero["id"])

@@ -481,14 +481,15 @@ def test_bank_feed_requires_bank_token(secured: TestClient) -> None:
     assert row["tracks"] == ["lottery"] and row["cases"] and "match_key" not in row
 
 
-def test_bank_feed_without_any_tokens_outside_dev_is_503(tmp_path: Path) -> None:
-    with _client(tmp_path, dev_mode=False, analyst_token="", bank_tokens=()) as client:
-        assert client.get("/api/v1/bank/requisites", headers=_auth(BANK)).status_code == 503
+def test_bank_feed_without_bank_tokens_outside_dev_is_503(tmp_path: Path) -> None:
+    # Без явного PRUF_BANK_ALLOW_ANALYST токен аналитика ленту не открывает
+    with _client(tmp_path, dev_mode=False, analyst_token=ANALYST, bank_tokens=()) as client:
+        assert client.get("/api/v1/bank/requisites", headers=_auth(ANALYST)).status_code == 503
 
 
 def test_analyst_token_opens_bank_feed_when_bank_tokens_are_not_set(tmp_path: Path) -> None:
     # Сайт аналитика показывает ленту реквизитов даже без выданных банкам токенов
-    with _client(tmp_path, dev_mode=False, analyst_token=ANALYST, bank_tokens=()) as client:
+    with _client(tmp_path, dev_mode=False, analyst_token=ANALYST, bank_tokens=(), bank_allow_analyst=True) as client:
         assert client.get("/api/v1/bank/requisites", headers=_auth(ANALYST)).status_code == 200
         assert client.get("/api/v1/bank/requisites", headers=_auth(BANK)).status_code == 401
 

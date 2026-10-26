@@ -1,6 +1,6 @@
 // ПРУФ: «что заблокировать» — ключевые реквизиты сети и проверка «что если» прямо в браузере.
 // Сервер присылает рёбра канал — реквизит/домен; эффект блокировки считается здесь, без запросов.
-import { REQ_TYPE, el, svgEl, tip, untip } from "./lib.js";
+import { REQ_TYPE, day, el, svgEl, tip, untip } from "./lib.js";
 
 const ROW = 22, COL_W = 250, GAP = 220, TOP = 14;
 
@@ -64,7 +64,18 @@ export function networkPanel(net, { title = "Что заблокировать: 
   redraw();
   return el("section", { class: "panel net" },
     el("h3", {}, title, " ", el("span", { class: "muted small" }, "подсказка для банка и регулятора, решает аналитик")),
+    rotation(net),
     el("div", { class: "net-grid" }, el("div", { class: "net-keys" }, rows, effect), picture));
+}
+
+// Сеть завела новые реквизиты позже старта: обычно это смена номера после блокировки
+function rotation(net) {
+  const fresh = net.fresh || [];
+  if (!fresh.length) return null;
+  return el("div", { class: "net-fresh", role: "note" },
+    el("b", {}, "Ротация реквизитов: "), `сеть работает с ${day(net.since)}, часть каналов сменила реквизиты. Новые тоже нужно блокировать.`,
+    el("ul", {}, fresh.map((f) => el("li", {},
+      el("b", { class: "mono" }, f.label), ` ${kindName(f.kind)} · вместо ${f.replaces.join(", ")} · с ${day(f.first_seen)} · каналов: ${f.channels.length}`))));
 }
 
 // Две колонки: реквизиты и домены слева, каналы справа. Заблокированное красное, отрезанное серое.

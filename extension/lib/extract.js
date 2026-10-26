@@ -27,6 +27,48 @@
     urgency: /осталось\s+\d+\s+мест|только сегодня|успей|спешите|\d+\s+орын қалды|места ограничены/u,
   };
 
+  // Копия CUES из pruf/inspect.py для оценки без сервера (tests/test_inspect.py сверяет их)
+  const CUE_INFO = {
+    paid_entry: ["common", "платный вход", "Платное участие или вход: взнос в тенге", 30],
+    delivery_fee: ["lottery", "оплата доставки приза", "Просят оплатить «доставку» или «комиссию» за приз", 30],
+    giveaway: ["lottery", "розыгрыш", "Розыгрыш или приз", 10],
+    casino: ["casino", "реклама казино", "Реклама казино, слотов или ставок", 25],
+    big_win: ["casino", "«поднял x500»", "Хвастовство выигрышем: «поднял x500», «занос»", 20],
+    promo_code: ["casino", "промокод на бонус", "Промокод или бонус на депозит", 15],
+    income_promise: ["pyramid", "обещание дохода", "Обещание дохода: % в день, «удвоим за неделю»", 35],
+    referral: ["pyramid", "доход за приглашённых", "Доход за приглашённых друзей", 25],
+    guarantee: ["pyramid", "гарантия выплат", "«Гарантия выплат», «без риска»", 15],
+    kaspi_transfer: ["common", "перевод на Kaspi", "Просят перевести деньги на Kaspi или карту", 15],
+    urgency: ["common", "давление срочностью", "Давление срочностью: «осталось 5 мест», «только сегодня»", 10],
+  };
+  const TRACK_TITLES = { lottery: "платного розыгрыша", casino: "скрытой рекламы казино", pyramid: "финансовой пирамиды" };
+  const HIGH_THRESHOLD = 65; // pruf/models.py
+  const MEDIUM_THRESHOLD = 35;
+
+  /** Оценка по одним локальным признакам, когда сервер недоступен: без реестра, только текст. */
+  function localVerdict(cues) {
+    const reasons = [];
+    const trackPoints = {};
+    for (const id of new Set(cues)) {
+      const info = CUE_INFO[id];
+      if (!info) continue;
+      const [track, short, label, weight] = info;
+      reasons.push({ id, short, label, weight });
+      if (track !== "common") trackPoints[track] = (trackPoints[track] || 0) + weight;
+    }
+    const score = Math.min(reasons.reduce((sum, r) => sum + r.weight, 0), 100);
+    const tracks = Object.keys(trackPoints);
+    const track = tracks.length ? tracks.reduce((a, b) => (trackPoints[b] > trackPoints[a] ? b : a)) : null;
+    const top = [...reasons].sort((a, b) => b.weight - a.weight).slice(0, 3).map((r) => r.short);
+    const head = track ? `Признаки ${TRACK_TITLES[track]}` : "Признаки мошеннической схемы";
+    const level = score >= HIGH_THRESHOLD ? "high" : score >= MEDIUM_THRESHOLD ? "medium" : "low";
+    return {
+      score, level, level_label: { high: "высокий", medium: "средний", low: "низкий" }[level], track,
+      show_banner: score >= HIGH_THRESHOLD, title: head + (top.length ? ": " + top.join(", ") : ""),
+      reasons, requisites: [], blacklisted_domains: [], local: true,
+    };
+  }
+
   function luhnOk(digits) {
     let total = 0;
     for (let i = 0; i < digits.length; i++) {
@@ -124,7 +166,8 @@
     return payload.requisites.length > 0 || payload.links.length > 0 || payload.cues.length > 0;
   }
 
-  const api = { extractRequisites, extractLinks, detectCues, foldForHash, textHash, buildPayload, worthChecking, luhnOk, cleanDigits };
+  const api = { extractRequisites, extractLinks, detectCues, foldForHash, textHash, buildPayload, worthChecking, luhnOk, cleanDigits,
+    localVerdict, CUE_INFO };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.PrufExtract = api;
 })(typeof globalThis !== "undefined" ? globalThis : self);

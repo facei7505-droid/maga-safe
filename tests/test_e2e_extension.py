@@ -2,7 +2,8 @@
 
 Страница Telegram Web подменяется локальной разметкой, сервер ПРУФ поднимается на свободном порту.
 Проверяем: плашка над скам-постом (а над обычным нет), «Почему?», переадресация домена из чёрного
-списка на страницу-предупреждение и счётчики popup.
+списка на страницу-предупреждение, счётчики popup, WhatsApp Web, жалобу, стоп на копировании засвеченного
+номера и оценку без сервера.
 """
 
 from __future__ import annotations
@@ -41,6 +42,16 @@ TELEGRAM_PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><title>Tele
 </script></body></html>"""
 
 
+KNOWN_PHONE = "+7 776 902 33 18"  # в реестре из постов казино ниже
+WHATSAPP_PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><title>WhatsApp</title></head><body>
+<div id="chat">
+  <div class="copyable-text" data-pre-plain-text="[10:01, 25.10.2026] Касса: " id="wa-scam"><span>{SCAM}</span></div>
+  <div class="copyable-text" data-pre-plain-text="[10:02, 25.10.2026] Мама: " id="wa-num"><span>Переведи на {KNOWN_PHONE}, это мой новый номер</span></div>
+</div>
+<footer><div class="copyable-text selectable-text" contenteditable="true" id="wa-input">{SCAM}</div></footer>
+</body></html>"""
+
+
 @pytest.fixture(scope="module")
 def server(tmp_path_factory: pytest.TempPathFactory, detector):
     os.environ.pop("WEB_CONCURRENCY", None)
@@ -74,6 +85,8 @@ def context(server: str, tmp_path_factory: pytest.TempPathFactory):
         worker.evaluate("() => refreshBlacklist()")
         ctx.route("https://web.telegram.org/**", lambda route: route.fulfill(
             status=200, content_type="text/html; charset=utf-8", body=TELEGRAM_PAGE))
+        ctx.route("https://web.whatsapp.com/**", lambda route: route.fulfill(
+            status=200, content_type="text/html; charset=utf-8", body=WHATSAPP_PAGE))
         yield ctx, worker
         ctx.close()
 
@@ -135,3 +148,58 @@ def test_popup_shows_counters(context) -> None:
     assert int(page.locator("#checked").text_content()) >= 2
     assert "1 доменов" in page.locator("#blacklist").text_content()
     page.close()
+
+
+def test_whatsapp_message_gets_banner_and_report_is_sent(context) -> None:
+    ctx, _ = context
+    page = ctx.new_page()
+    page.goto("https://web.whatsapp.com/")
+    banner = page.locator("#wa-scam .pruf-host")
+    banner.wait_for(state="attached", timeout=10_000)
+    assert page.locator("#wa-input .pruf-host").count() == 0  # поле ввода не сообщение
+    status = banner.evaluate("""async h => {
+        const r = h.shadowRoot;
+        r.querySelector('button').click();
+        const report = [...r.querySelectorAll('button')].find(b => b.textContent === 'Сообщить в ПРУФ');
+        report.click();
+        for (let i = 0; i < 100 && report.disabled && report.textContent === 'Сообщить в ПРУФ'; i++) await new Promise(f => setTimeout(f, 50));
+        return report.textContent;
+    }""")
+    assert status == "Спасибо, жалоба отправлена"
+    page.close()
+
+
+def test_copying_known_number_shows_warning(context) -> None:
+    ctx, _ = context
+    page = ctx.new_page()
+    page.goto("https://web.whatsapp.com/")
+    page.locator("#wa-num").wait_for()
+    page.evaluate("""() => {
+        const span = document.querySelector('#wa-num span');
+        const range = document.createRange();
+        range.selectNodeContents(span);
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        document.dispatchEvent(new ClipboardEvent('copy', { bubbles: true }));
+    }""")
+    toast = page.locator("body > .pruf-host")
+    toast.wait_for(state="attached", timeout=10_000)
+    assert "+77769023318 уже встречался в постах" in toast.evaluate("h => h.shadowRoot.textContent")
+    page.close()
+
+
+def test_banner_works_offline_with_local_verdict(context, server: str) -> None:
+    ctx, worker = context
+    worker.evaluate("() => chrome.storage.local.set({apiUrl: 'http://127.0.0.1:9'})")  # сервер недоступен
+    try:
+        page = ctx.new_page()
+        page.goto("https://web.telegram.org/k/")
+        banner = page.locator("#scam .pruf-host")
+        banner.wait_for(state="attached", timeout=15_000)
+        text = banner.evaluate("h => h.shadowRoot.textContent")
+        assert "Признаки финансовой пирамиды" in text and "оценка браузера без сервера" in text
+        assert "Сообщить в ПРУФ" not in text  # без сервера жалобу отправить некуда
+        assert page.locator("#chat .pruf-host").count() == 0
+        page.close()
+    finally:
+        worker.evaluate("url => chrome.storage.local.set({apiUrl: url})", server)
