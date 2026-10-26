@@ -1,0 +1,33 @@
+{
+  "sha256": "9b448040dc4e88c83ef6782195c465a7ee1caeb1a84fefaa4c93d0c66eb31814",
+  "sklearn": "1.9.1",
+  "trained_at": "2026-10-26T15:15:39+00:00",
+  "synthetic_rows": 681,
+  "sets": {
+    "handwritten": 59,
+    "dev_round2": 60,
+    "dev_round4": 36,
+    "dev_round5": 16,
+    "dev_round6": 37,
+    "handwritten_blind": 40,
+    "handwritten_blind_v2": 60,
+    "handwritten_blind_v3": 80,
+    "handwritten_blind_v4": 160,
+    "handwritten_blind_v5": 180,
+    "handwritten_blind_v6": 200,
+    "handwritten_blind_v7": 200,
+    "handwritten_blind_v8": 200,
+    "handwritten_blind_v9": 200,
+    "handwritten_blind_v10": 200,
+    "handwritten_blind_v11": 200,
+    "handwritten_blind_v12": 200,
+    "handwritten_blind_v13": 200,
+    "handwritten_blind_v14": 200,
+    "handwritten_blind_v15": 200,
+    "real_v1": 349,
+    "real_v2": 456,
+    "real_v3": 418,
+    "real_v4": 416
+  },
+  "real_posts": 1639
+}
