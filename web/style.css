@@ -68,6 +68,7 @@ kbd { border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 
 .content { min-width: 0; }
 main { max-width: 1320px; margin: 0 auto; padding: 28px 32px 56px; }
 .banner { background: var(--medium-soft); color: #92400e; padding: 10px 32px; border-bottom: 1px solid var(--medium-line); }
+#demo-note { background: var(--panel-2); color: var(--muted); border-bottom: 1px solid var(--line); font-size: 13px; }
 .case-card .banner, .check-result .banner { border: 1px solid var(--medium-line); border-radius: var(--r-sm); margin: 8px 0; padding: 8px 12px; }
 
 .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }

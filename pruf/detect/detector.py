@@ -86,14 +86,17 @@ def _link_evidence(links: list[Link]) -> list[Evidence]:
     return out
 
 
-def _requisite_evidence(reqs: list[Requisite]) -> list[Evidence]:
+def _requisite_evidence(reqs: list[Requisite], source: dict[str, str] | None = None) -> list[Evidence]:
     out: list[Evidence] = []
-    if any(r.kind == "kaspi_link" for r in reqs):
-        out.append(Evidence("common.kaspi_pay_link", "common", "Платёжная ссылка Kaspi в сообщении", 8, "text",
-                            next(r.display for r in reqs if r.kind == "kaspi_link")))
-    if any(r.kind in ("card", "phone", "iban") for r in reqs):
-        r = next(r for r in reqs if r.kind in ("card", "phone", "iban"))
-        out.append(Evidence("common.requisite", "common", "Реквизиты для перевода в тексте", 6, "text", r.display))
+    source = source or {}
+    link = next((r for r in reqs if r.kind == "kaspi_link"), None)
+    if link:
+        out.append(Evidence("common.kaspi_pay_link", "common", "Платёжная ссылка Kaspi в сообщении", 8,
+                            source.get(link.key, "text"), link.display))
+    money = next((r for r in reqs if r.kind in ("card", "phone", "iban")), None)
+    if money:
+        out.append(Evidence("common.requisite", "common", "Реквизиты для перевода в тексте", 6,
+                            source.get(money.key, "text"), money.display))
     return out
 
 
@@ -129,6 +132,7 @@ class Detector:
         links: list[Link] = []
         folded_parts: list[str] = []
         req_keys: set[str] = set()
+        req_source: dict[str, str] = {}  # откуда реквизит: текст, скриншот, QR — аналитик видит, где он был спрятан
         for src in sources:
             if not src.text or not src.text.strip():
                 continue
@@ -147,13 +151,14 @@ class Detector:
                 if req.key not in req_keys:
                     req_keys.add(req.key)
                     requisites.append(req)
+                    req_source[req.key] = src.source
             # сеть только для доверенных запросов: анонимный бот не заставляет сервер ходить по чужим ссылкам
             if self._settings.resolve_links and resolve_links:
                 found_links = [resolve_shortener(link) if i < MAX_RESOLVE_PER_POST else link
                                for i, link in enumerate(found_links)]
             links.extend(found_links)
         evidence.extend(_link_evidence(links))
-        evidence.extend(_requisite_evidence(requisites))
+        evidence.extend(_requisite_evidence(requisites, req_source))
         folded = "\n".join(folded_parts)
         ml = self._classifier.predict_folded(folded) if self._classifier and folded.strip() else None
         ml_words = self._ml_words(folded, ml)

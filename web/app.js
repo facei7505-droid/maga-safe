@@ -28,6 +28,7 @@ async function loadStats() {
     if (!cap.ocr && !cap.ocr_off) off.push("OCR");  // выключенный настройкой OCR (PRUF_OCR=0) — не поломка
     if (!cap.ml) off.push("ML-модель");
     if (cap.llm && cap.llm.configured && cap.llm.failures) off.push(`LLM (ошибок: ${cap.llm.failures})`);
+    $("#demo-note").classList.toggle("hidden", !data.demo_posts);
     const banner = $("#degraded");
     if (off.length) {
       banner.textContent = "Работает не всё: " + off.join(", ") + ". Анализ идёт по остальным признакам.";
@@ -382,7 +383,8 @@ async function submitCheck(ev) {
 }
 
 function gauge(score, level) {
-  return el("div", { class: "gauge " + level, style: `--p:${Math.max(0, Math.min(100, score))}` },
+  return el("div", { class: "gauge " + level, style: `--p:${Math.max(0, Math.min(100, score))}`,
+    title: "Балл 0–100 — сумма весов найденных признаков, а не вероятность мошенничества. Уровни: низкий < 35 ≤ средний < 65 ≤ высокий." },
     el("div", { class: "gauge-v" }, Math.round(score)), el("div", { class: "gauge-l" }, LEVEL[level] || level));
 }
 

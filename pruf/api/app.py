@@ -432,7 +432,9 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         saved = keeper.info() if keeper else {"backend": None, "error": state.get("state_error")}
         return ok({"posts": p.db.count_posts(), "levels": p.db.level_counts(), "cases": len(g.cases()),
                    "images_indexed": len(p.registry.images), "texts_indexed": len(p.registry.texts),
-                   "capabilities": capabilities(p), "state": saved})
+                   "capabilities": capabilities(p), "state": saved,
+                   # посты демо-заливки (scripts/seed_demo.py): дашборд честно говорит, что они придуманы
+                   "demo_posts": p.db.count_posts_from("seed")})
 
     @app.get("/api/v1/overview")
     def overview_view(actor: str = Depends(analyst)):

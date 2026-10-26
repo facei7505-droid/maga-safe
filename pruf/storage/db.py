@@ -287,6 +287,10 @@ class Database:
     def all_posts_brief(self) -> list[dict[str, Any]]:
         return self._all("SELECT id, channel, posted_at, score, level, track FROM posts WHERE status='ok'")
 
+    def count_posts_from(self, source: str) -> int:
+        row = self._one("SELECT COUNT(*) AS n FROM posts WHERE source=?", (source,))
+        return int(row["n"]) if row else 0
+
     def count_posts(self) -> int:
         row = self._one("SELECT COUNT(*) AS n FROM posts")
         return int(row["n"]) if row else 0

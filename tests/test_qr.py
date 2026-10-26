@@ -183,3 +183,9 @@ def test_ingest_resolves_links_once_outside_the_lock_and_stores_final_domain(tmp
         assert [link["domain"] for link in p.db.links_for_post(post["post_id"])] == ["joy-slots-kz.top"]
     finally:
         p.db.close()
+
+
+def test_kaspi_link_from_qr_is_marked_as_qr(pruf: Pruf) -> None:
+    result = pruf.check("Розыгрыш! Участие по QR", images=(_jpeg(_poster(KASPI_PAY)),))
+    link = next(e for e in result["analysis"]["evidence"] if e["feature_id"] == "common.kaspi_pay_link")
+    assert link["source"] == "qr"
