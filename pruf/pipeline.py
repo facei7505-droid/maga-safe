@@ -140,6 +140,12 @@ class Pruf:
                 continue
             levels = self.db.post_levels(others)
             risky = [p for p in others if levels[p][0] in RISKY_LEVELS]
+            cleared_at = self.db.requisite_cleared_at(req["key"]) if risky else None
+            if cleared_at:
+                # Аналитик отклонил кейс с этим реквизитом: старые посты его больше не засвечивают,
+                # иначе честный магазин навсегда остаётся «встречался в схемах». Новые рискованные посты после решения — да.
+                fresh = self.db.posts_created_after(risky, cleared_at)
+                risky = [p for p in risky if p in fresh]
             if risky:
                 tracks = sorted({levels[p][1] for p in risky if levels[p][1]})
                 out.append(Evidence(f"graph.requisite.{req['kind']}", _major_track(levels, risky),
