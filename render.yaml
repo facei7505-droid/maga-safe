@@ -4,6 +4,12 @@
 # Выдавая токены банкам, задайте PRUF_BANK_TOKENS и уберите PRUF_BANK_ALLOW_ANALYST.
 # PRUF_OCR=0: OCR скриншотов поднимает память до 540–660 МБ, бесплатные 512 МБ его не держат.
 # Сравнение картинок (PDQ) работает, суммы на скринах не читаются. На плане standard (2 ГБ) переменную можно убрать.
+# PRUF_STATE_URL: решения аналитика, жалобы, отметки бота и исходы банков переживают перезапуск (pruf/storage/state.py).
+# Бесплатный Postgres на Render ограничен по сроку: перед пилотом перейдите на платный план или свой Postgres.
+databases:
+  - name: pruf-state
+    plan: free
+    region: frankfurt
 services:
   - type: web
     name: pruf
@@ -31,6 +37,10 @@ services:
         value: "120"
       - key: PRUF_OCR
         value: "0"
+      - key: PRUF_STATE_URL
+        fromDatabase:
+          name: pruf-state
+          property: connectionString
       # Короткие ссылки (bit.ly, clck.ru) раскрываются HEAD-запросом до итогового домена: казино прячут зеркала за ними.
       # Только для запросов аналитика с токеном; анонимный бот ссылки не раскрывает. Внутренние адреса запрещены.
       - key: PRUF_RESOLVE_LINKS

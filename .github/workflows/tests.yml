@@ -12,6 +12,15 @@ jobs:
     name: Python ${{ matrix.python }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Postgres для теста снимка решений людей (tests/test_state.py)
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pruf
+          POSTGRES_PASSWORD: pruf
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U pruf" --health-interval 5s --health-timeout 5s --health-retries 10
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +41,8 @@ jobs:
           python -m playwright install --with-deps chromium
           echo "PRUF_E2E_CHROMIUM=$(python -c 'from playwright.sync_api import sync_playwright as s; p = s().start(); print(p.chromium.executable_path); p.stop()')" >> "$GITHUB_ENV"
       - name: Тесты
+        env:
+          PRUF_TEST_POSTGRES_URL: postgresql://pruf:pruf@127.0.0.1:5432/postgres
         run: python -m pytest -q --cov --cov-report=term
 
   extension:

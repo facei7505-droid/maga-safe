@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
 import threading
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -192,6 +193,16 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _mutates(method):
+    """Метод меняет таблицы людей: после него база сообщает об изменении (снимок состояния, pruf/storage/state.py)."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        result = method(self, *args, **kwargs)
+        self._changed()
+        return result
+    return wrapper
+
+
 class Database:
     def __init__(self, path: Path | str):
         if str(path) != ":memory:":
@@ -199,6 +210,7 @@ class Database:
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self.on_change: Callable[[], None] | None = None  # изменились таблицы людей (pruf/storage/state.py)
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
@@ -211,6 +223,10 @@ class Database:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def _changed(self) -> None:
+        if self.on_change is not None:
+            self.on_change()
 
     def _all(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         with self._lock:
@@ -408,6 +424,7 @@ class Database:
             params,
         )
 
+    @_mutates
     def drop_stale_decisions(self, keys: Sequence[str], live_cases: set[str]) -> int:
         """Убрать решения по этим реквизитам от кейсов, которых нет в текущем графе (слились или распались)."""
         if not keys:
@@ -419,6 +436,7 @@ class Database:
             self._conn.executemany("DELETE FROM requisite_status WHERE key=? AND case_key=?", stale)
         return len(stale)
 
+    @_mutates
     def set_case_decision(self, case_key: str, keys: Sequence[str], decision: str | None, actor: str) -> None:
         """Решение аналитика по кейсу переносится на его реквизиты; прежнее решение этого кейса заменяется."""
         if decision not in (None, "confirmed", "dismissed"):
@@ -444,6 +462,7 @@ class Database:
     def case_statuses(self) -> dict[str, dict[str, Any]]:
         return {r["case_key"]: r for r in self._all("SELECT * FROM case_status")}
 
+    @_mutates
     def set_case_status(self, case_key: str, status: str, note: str | None, actor: str) -> None:
         if status not in CASE_STATUSES:
             raise ValueError("недопустимый статус")
@@ -453,6 +472,7 @@ class Database:
             (case_key, status, note, utcnow(), actor),
         )
 
+    @_mutates
     def audit(self, actor: str, action: str, target: str | None) -> None:
         self._exec("INSERT INTO audit_log (ts, actor, action, target) VALUES (?,?,?,?)", (utcnow(), actor, action, target))
 
@@ -469,6 +489,7 @@ class Database:
             (limit,))
 
     # ---------- жалобы из расширения ----------
+    @_mutates
     def add_report(self, *, reporter: str, platform: str, text_hash: str, cues: Sequence[str], domains: Sequence[str],
                    requisites: Sequence[tuple[str, str, str]], daily_cap: int = 30) -> bool:
         """Жалоба пользователя. Повторная жалоба того же человека на тот же пост и жалобы сверх daily_cap
@@ -511,6 +532,7 @@ class Database:
             "ORDER BY trusted_reporters DESC, reporters DESC, last_report DESC LIMIT ?", (trusted_min, limit))
 
     # ---------- «Это не мошенничество» из бота ----------
+    @_mutates
     def count_bot_features(self, features: Sequence[tuple[str, str]]) -> None:
         """Сколько раз признак показан в ответе бота со средним или высоким риском: знаменатель доли споров.
         Только счётчики по дням, без текста и без того, кто спрашивал."""
@@ -523,6 +545,7 @@ class Database:
                 "ON CONFLICT(feature_id, day) DO UPDATE SET shown=shown+1, label=excluded.label",
                 [(fid, today, label) for fid, label in dict(features).items()])
 
+    @_mutates
     def add_bot_feedback(self, *, reporter: str, check_id: str, level: str, score: float, track: str | None,
                          lang: str, features: Sequence[tuple[str, str]], daily_cap: int = 30) -> bool:
         """Отметка «это не мошенничество». Хранятся только номера и названия сработавших признаков,
@@ -567,6 +590,7 @@ class Database:
         return int(row["n"]) if row else 0
 
     # ---------- обратная связь банков ----------
+    @_mutates
     def set_bank_feedback(self, *, bank: str, key: str, kind: str, display: str, outcome: str) -> None:
         """Исход по реквизиту от банка. Один банк — одно последнее мнение о реквизите; хранится дата без времени
         и маскированный реквизит."""

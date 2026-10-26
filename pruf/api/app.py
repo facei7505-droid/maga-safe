@@ -50,6 +50,7 @@ from pruf.pipeline import Pruf, Submission, Upload
 from pruf.registry.forensics import ela_heatmap_png
 from pruf.registry.hashing import open_image
 from pruf.storage.db import CASE_STATUSES
+from pruf.storage.state import StateKeeper, backend_for
 
 log = logging.getLogger(__name__)
 MAX_FILES = 6
@@ -149,6 +150,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         state["pruf"] = pruf or Pruf(settings)
         state["graph"] = CaseGraph(state["pruf"].db)
         state["inspector"] = Inspector(state["pruf"].db, state["pruf"].settings.effective_hmac_key())
+        start_state_keeper(state["pruf"])
         if settings.telegram_token:
             if len(settings.telegram_secret) < MIN_WEBHOOK_SECRET or not settings.telegram_secret.replace("-", "").replace("_", "").isalnum():
                 log.warning("вебхук бота выключен: задайте PRUF_TELEGRAM_SECRET из %d+ символов [A-Za-z0-9_-]", MIN_WEBHOOK_SECRET)
@@ -164,7 +166,24 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         yield
         if "bot_pool" in state:
             state["bot_pool"].shutdown(wait=True)
+        if "keeper" in state:
+            state["keeper"].close()  # последние изменения — в снимок до закрытия базы
         state["pruf"].db.close()
+
+    def start_state_keeper(p: Pruf) -> None:
+        try:
+            backend = backend_for(p.settings.state_url)
+        except Exception as exc:  # noqa: BLE001 — без хранилища сервер работает, как раньше, но это видно в stats
+            log.error("хранилище состояния недоступно, решения людей не сохраняются: %s", exc)
+            state["state_error"] = f"{type(exc).__name__}: {exc}"[:200]
+            return
+        if backend is None:
+            return
+        keeper = StateKeeper(p.db, backend)
+        if keeper.restore():
+            p.version += 1  # статусы кейсов и списки поменялись: граф и проверка пересоберутся
+        p.db.on_change = keeper.changed
+        state["keeper"] = keeper
 
     app = FastAPI(title="ПРУФ API", version="0.1.0", lifespan=lifespan)
     max_body = MAX_FILES * settings.max_upload_bytes + 256 * 1024
@@ -409,9 +428,11 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     def stats(actor: str = Depends(analyst)):
         p = core()
         g = graph()
+        keeper = state.get("keeper")
+        saved = keeper.info() if keeper else {"backend": None, "error": state.get("state_error")}
         return ok({"posts": p.db.count_posts(), "levels": p.db.level_counts(), "cases": len(g.cases()),
                    "images_indexed": len(p.registry.images), "texts_indexed": len(p.registry.texts),
-                   "capabilities": capabilities(p)})
+                   "capabilities": capabilities(p), "state": saved})
 
     @app.get("/api/v1/overview")
     def overview_view(actor: str = Depends(analyst)):

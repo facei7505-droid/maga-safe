@@ -11,3 +11,4 @@ scikit-learn>=1.9,<1.10  # модель в models/prod — pickle, перено�
 joblib>=1.4
 httpx>=0.27
 anthropic>=0.40
+psycopg[binary]>=3.2  # снимок решений людей в Postgres (PRUF_STATE_URL); импортируется, только если задан
