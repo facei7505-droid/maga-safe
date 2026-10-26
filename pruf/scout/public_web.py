@@ -119,6 +119,8 @@ def parse_channel(page: str, username: str) -> ChannelInfo | None:
 class PublicWebSource:
     """ChannelSource поверх t.me/s. fetch(url) → HTML; по умолчанию httpx с честным User-Agent."""
 
+    name = "public_web"
+
     def __init__(self, fetch: Callable[[str], str] | None = None, max_pages: int = MAX_PAGES):
         self._fetch = fetch or _http_fetch()
         self._max_pages = max_pages

@@ -109,3 +109,13 @@ def test_collector_rejects_unknown_group(tmp_path):
     bad.write_text("prizy_kz spam\n", encoding="utf-8")
     with pytest.raises(SystemExit):
         collect_public.read_channels(bad)
+
+
+def test_web_source_works_behind_throttle():
+    from pruf.scout.sources import Throttle, ThrottledSource
+
+    src = ThrottledSource(PublicWebSource(fetch=fake_fetch({"https://t.me/s/prizy_kz": PAGE1,
+                                                            "https://t.me/s/prizy_kz?before=101": PAGE0})), Throttle(0.0, 10))
+    assert src.name == "public_web"
+    assert src.channel_info("prizy_kz").subscribers == 12_300
+    assert [p.message_id for p in src.recent_posts("prizy_kz", 2)] == [102, 101]
