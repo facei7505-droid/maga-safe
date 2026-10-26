@@ -79,6 +79,12 @@ class RequisiteCheck(BaseModel):
     value: str = Field(min_length=5, max_length=64)
 
 
+class BankFeedbackIn(BaseModel):
+    """Исход по реквизиту от банка: без имён клиентов и сумм, только сам реквизит и вывод банка."""
+    value: str = Field(min_length=5, max_length=64)
+    outcome: str = Field(pattern="^(fraud_confirmed|legit_client)$")
+
+
 def capabilities(p: Pruf) -> dict[str, Any]:
     """Что реально работает: аналитик видит, если OCR, Whisper, ML или LLM недоступны."""
     return {"ocr": p.settings.ocr_enabled and ocr_available(), "ocr_off": not p.settings.ocr_enabled, "whisper": whisper_available(), "qr": p.settings.qr_enabled and qr_available(),
@@ -461,12 +467,33 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             raise HTTPException(status_code=400, detail="Не распознан реквизит: карта, телефон +7, IBAN KZ или ссылка Kaspi")
         found = core().db.lookup_requisite(reqs[0].key)
         core().db.audit(actor, "bank_check", reqs[0].kind)
+        # что сказали другие банки (без названий): «два банка подтвердили мошенничество» весомее любого признака
+        outcomes = core().db.bank_outcomes(reqs[0].key)
         if not found:
-            return ok({"found": False, "type": reqs[0].kind})
-        return ok({"found": True, "type": found["kind"], "value": found["display"], "posts": found["posts"],
+            return ok({"found": False, "type": reqs[0].kind, "bank_outcomes": outcomes})
+        return ok({"found": True, "type": found["kind"], "value": found["display"], "posts": found["posts"], "bank_outcomes": outcomes,
                    "max_score": found["max_score"], "tracks": sorted(set((found["tracks"] or "").split(",")) - {""}),
                    "first_seen": found["first_seen"], **list_info(found["list"], found["decided"], found["grey_since"]),
                    "note": "Найдены признаки использования реквизита в схемах; требуется проверка банком"})
+
+    @app.post("/api/v1/bank/feedback")
+    def bank_feedback_post(body: BankFeedbackIn, actor: str = Depends(bank)):
+        """Банк сообщает исход: перевод на реквизит оказался мошенничеством или получатель — честный клиент.
+        Это подсказка аналитику, а не решение: список и оценку меняет только аналитик."""
+        reqs = extract_requisites(body.value, core().settings.effective_hmac_key())
+        if not reqs:
+            raise HTTPException(status_code=400, detail="Не распознан реквизит: карта, телефон +7, IBAN KZ или ссылка Kaspi")
+        req = reqs[0]
+        core().db.set_bank_feedback(bank=actor, key=req.key, kind=req.kind, display=mask(req.kind, req.display), outcome=body.outcome)
+        core().db.audit(actor, "bank_feedback", f"{req.kind}:{body.outcome}")
+        return ok({"type": req.kind, "outcome": body.outcome, "recorded": True})
+
+    @app.get("/api/v1/bank/feedback")
+    def bank_feedback_list(limit: int = Query(default=200, ge=1, le=1000), actor: str = Depends(analyst)):
+        rows = core().db.bank_feedback_list(limit)
+        return ok([{"type": r["kind"], "value": r["display"], "fraud_confirmed": r["fraud_confirmed"],
+                    "legit_client": r["legit_client"], "banks": r["banks"], "last": r["last"],
+                    "in_registry": bool(r["in_registry"])} for r in rows], total=len(rows))
 
     # ---------- расширение ПРУФ Sentinel ----------
     @app.post("/api/v1/inspect")

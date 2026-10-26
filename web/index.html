@@ -155,6 +155,16 @@
             <table class="table"><thead><tr><th>Тип</th><th>Значение</th><th>Людей</th><th title="Жалобщики, чьи прошлые жалобы аналитик подтверждал">Проверенных</th><th title="Средняя надёжность жалобщиков: доля подтверждённых жалоб, новый человек 0,5">Надёжность</th><th>Жалоб</th><th>Площадки</th><th>В реестре</th><th>Последняя</th></tr></thead><tbody id="report-rows"></tbody></table>
           </div>
         </div>
+        <div class="panel table-panel" id="bank-outcomes-panel">
+          <div class="row bank-head">
+            <h3>Исходы от банков</h3>
+            <span class="muted small" id="bank-outcomes-total"></span>
+          </div>
+          <p class="muted small">Банк по API сообщает, чем кончился перевод: мошенничество подтверждено или получатель — честный клиент. Это самый весомый внешний сигнал, но список и оценку меняет только аналитик. Хранится маскированный реквизит и дата.</p>
+          <div class="table-scroll">
+            <table class="table"><thead><tr><th>Тип</th><th>Значение</th><th>Мошенничество</th><th>Честный клиент</th><th>Банков</th><th>В реестре</th><th>Последний</th></tr></thead><tbody id="bank-outcome-rows"></tbody></table>
+          </div>
+        </div>
       </section>
 
       <section id="view-scout" class="view hidden">

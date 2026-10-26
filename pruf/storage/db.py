@@ -161,6 +161,15 @@ CREATE TABLE IF NOT EXISTS bot_feature_shown (
     shown INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (feature_id, day)
 );
+CREATE TABLE IF NOT EXISTS bank_feedback (
+    bank TEXT NOT NULL,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    display TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    PRIMARY KEY (bank, key)
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -171,6 +180,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 """
 
 CASE_STATUSES = ("new", "in_review", "confirmed", "dismissed")
+BANK_OUTCOMES = ("fraud_confirmed", "legit_client")  # банк: перевод оказался мошенничеством / это наш честный клиент
 # Решения аналитика по реквизиту (pruf/lists.py): подтверждённый кейс делает номер чёрным, отклонённый снимает;
 # без решений номер серый. Чёрный побеждает: номер из подтверждённого кейса не снимается другим кейсом.
 _LIST_JOIN = ("LEFT JOIN (SELECT key AS dkey, MAX(decision='confirmed') AS black, MAX(decision='dismissed') AS cleared, "
@@ -555,6 +565,28 @@ class Database:
     def bot_feedback_count(self) -> int:
         row = self._one("SELECT COUNT(*) AS n FROM bot_feedback")
         return int(row["n"]) if row else 0
+
+    # ---------- обратная связь банков ----------
+    def set_bank_feedback(self, *, bank: str, key: str, kind: str, display: str, outcome: str) -> None:
+        """Исход по реквизиту от банка. Один банк — одно последнее мнение о реквизите; хранится дата без времени
+        и маскированный реквизит."""
+        if outcome not in BANK_OUTCOMES:
+            raise ValueError("недопустимый исход")
+        self._exec("INSERT INTO bank_feedback (bank, key, kind, display, outcome, ts) VALUES (?,?,?,?,?,?) "
+                   "ON CONFLICT(bank, key) DO UPDATE SET outcome=excluded.outcome, ts=excluded.ts",
+                   (bank, key, kind, display, outcome, utcnow()[:10]))
+
+    def bank_outcomes(self, key: str) -> dict[str, int]:
+        rows = self._all("SELECT outcome, COUNT(*) AS n FROM bank_feedback WHERE key=? GROUP BY outcome", (key,))
+        return {o: next((r["n"] for r in rows if r["outcome"] == o), 0) for o in BANK_OUTCOMES}
+
+    def bank_feedback_list(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Для аналитика: реквизиты с исходами от банков, сверху подтверждённое мошенничество от нескольких банков."""
+        return self._all(
+            "SELECT f.kind, f.key, MAX(f.display) AS display, SUM(f.outcome='fraud_confirmed') AS fraud_confirmed, "
+            "SUM(f.outcome='legit_client') AS legit_client, COUNT(DISTINCT f.bank) AS banks, MAX(f.ts) AS last, "
+            "EXISTS(SELECT 1 FROM requisites r WHERE r.key=f.key) AS in_registry "
+            "FROM bank_feedback f GROUP BY f.key ORDER BY fraud_confirmed DESC, banks DESC, last DESC LIMIT ?", (limit,))
 
     def report_count(self) -> int:
         row = self._one("SELECT COUNT(*) AS n FROM user_reports")

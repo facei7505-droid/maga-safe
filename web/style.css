@@ -149,7 +149,7 @@ svg.chart .bar:hover .seg { filter: brightness(.92); }
 .table-panel .bank-head { padding: 14px 20px; border-bottom: 1px solid var(--line); justify-content: space-between; }
 .table-panel .bank-head h3 { margin: 0; }
 .table-panel > p { margin: 0; padding: 10px 20px; }
-#reports-panel, #disputes-panel { margin-top: 16px; }
+#reports-panel, #disputes-panel, #bank-outcomes-panel { margin-top: 16px; }
 .table-scroll { max-height: calc(100vh - 200px); overflow: auto; }
 .table-panel .table td:first-child, .table-panel .table th:first-child { padding-left: 20px; }
 .table-panel .table td:nth-child(2) { font-family: var(--mono); font-size: 13px; color: var(--ink); }

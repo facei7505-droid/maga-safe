@@ -523,5 +523,5 @@ def test_bank_check_finds_known_requisite(dev: TestClient) -> None:
 
     # Assert
     assert found["found"] is True and found["posts"] == 1 and found["tracks"] == ["lottery"]
-    assert unknown == {"found": False, "type": "phone"}
+    assert unknown == {"found": False, "type": "phone", "bank_outcomes": {"fraud_confirmed": 0, "legit_client": 0}}
     assert garbage.status_code == 400

@@ -418,6 +418,23 @@ async function loadBank() {
     tbody.replaceChildren(el("tr", {}, el("td", { colspan: 8, class: "err" }, err.message + " (нужен токен аналитика или банка)")));
   }
   loadReports();
+  loadBankOutcomes();
+}
+
+async function loadBankOutcomes() {
+  const tbody = $("#bank-outcome-rows");
+  try {
+    const { data, meta } = await api("/api/v1/bank/feedback?limit=200");
+    $("#bank-outcomes-total").textContent = `реквизитов: ${meta.total}`;
+    tbody.replaceChildren(...(data.length ? data.map((r) => el("tr", {},
+      el("td", {}, el("span", { class: "req-type" }, REQ_TYPE[r.type] || r.type)), el("td", { class: "mono" }, r.value),
+      el("td", {}, r.fraud_confirmed ? el("b", { class: "err" }, r.fraud_confirmed) : el("span", { class: "muted" }, "0")),
+      el("td", {}, r.legit_client || el("span", { class: "muted" }, "0")), el("td", {}, r.banks),
+      el("td", {}, r.in_registry ? "да" : el("span", { class: "muted" }, "новый")), el("td", {}, day(r.last))))
+      : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Банки пока не присылали исходов"))]));
+  } catch (err) {
+    tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "err" }, err.message)));
+  }
 }
 
 const PLATFORM_NAME = { telegram: "Telegram", whatsapp: "WhatsApp", instagram: "Instagram", other: "другое" };

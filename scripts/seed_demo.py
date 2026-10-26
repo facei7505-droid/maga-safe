@@ -217,6 +217,22 @@ def seed_bot_feedback(pruf: Pruf) -> int:
     return pruf.db.bot_feedback_count()
 
 
+def seed_bank_outcomes(pruf: Pruf) -> int:
+    """Исходы от двух демо-банков: номер оператора — подтверждённое мошенничество, номер честного магазина — свой клиент."""
+    from pruf.lists import mask
+    from pruf.normalize.requisites import extract_requisites
+
+    plan = (("+77473185264", "fraud_confirmed", ("bank:demo-halyk", "bank:demo-kaspi")),
+            (HONEST_GIVEAWAY[1].rsplit(": ", 1)[-1], "legit_client", ("bank:demo-kaspi",)))
+    n = 0
+    for value, outcome, banks in plan:
+        req = extract_requisites(value, pruf.settings.effective_hmac_key())[0]
+        for bank in banks:
+            pruf.db.set_bank_feedback(bank=bank, key=req.key, kind=req.kind, display=mask(req.kind, req.display), outcome=outcome)
+            n += 1
+    return n
+
+
 def seed_decisions(pruf: Pruf) -> dict[str, int]:
     """Решения аналитика для демо: кейс оператора подтверждён, честный розыгрыш отклонён."""
     channel, text = HONEST_GIVEAWAY
@@ -271,6 +287,7 @@ def main() -> None:
     _log(f"списки: {seed_decisions(pruf)} (confirmed → чёрный, dismissed → снят)")
     _log(f"история проверенных жалобщиков: {seed_trusted_history(pruf)} жалоб")
     _log(f"отметки «Это не мошенничество» из бота: {seed_bot_feedback(pruf)}")
+    _log(f"исходы от банков: {seed_bank_outcomes(pruf)}")
     hero = pruf.db.find_post_by_external_id("hero00")
     if hero:
         arts = pruf.db.artifacts_for_post(hero["id"])
