@@ -18,6 +18,7 @@ DEV_SETS: tuple[str, ...] = (
     "handwritten_blind", "handwritten_blind_v2", "handwritten_blind_v3", "handwritten_blind_v4", "handwritten_blind_v5",
     "handwritten_blind_v6", "handwritten_blind_v7", "handwritten_blind_v8", "handwritten_blind_v9", "handwritten_blind_v10", "handwritten_blind_v11", "handwritten_blind_v12",
     "handwritten_blind_v13", "handwritten_blind_v14",
+    "handwritten_blind_v15", "real_v1",  # real_v1: реальные посты открытых каналов KZ, обезличены (scripts/anonymize_real.py)
 )
 HANDWRITTEN_REPEAT = 3
 
