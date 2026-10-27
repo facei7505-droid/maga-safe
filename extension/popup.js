@@ -6,7 +6,7 @@
   let lang = "ru";
 
   async function render() {
-    const s = await chrome.storage.local.get({ stats: {}, blacklist: {}, apiUrl: "http://127.0.0.1:8000", token: "", lang: "auto" });
+    const s = await chrome.storage.local.get({ stats: {}, blacklist: {}, apiUrl: "https://pruf-bba7.onrender.com", token: "", lang: "auto" });
     lang = pickLang(s.lang, navigator.language);
     applyStatic(document, lang);
     $("lang").value = s.lang;

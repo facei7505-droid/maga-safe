@@ -2,7 +2,8 @@
 // пункт меню «Проверить в ПРУФ» и счётчики для popup. Токен хранится только здесь, в chrome.storage.
 importScripts("lib/extract.js", "lib/i18n.js");
 
-const DEFAULT_API = "http://127.0.0.1:8000";
+// демо-сервер ПРУФ на Render: после установки остаётся вставить только токен расширения
+const DEFAULT_API = "https://pruf-bba7.onrender.com";
 const BLACKLIST_ALARM = "pruf-blacklist";
 const BLACKLIST_PERIOD_MIN = 60;
 const MAX_REGEX_RULES = 1000; // лимит Chrome на regex-правила
@@ -116,8 +117,12 @@ async function refreshBlacklist() {
     await chrome.storage.local.set({ blacklist: { ...prev, disabled: true, error: null } });
     return;
   }
+  // ответ старого сервера не должен перезаписать статус, если адрес сменили, пока шёл запрос
+  const { apiUrl } = await settings();
+  const stale = async () => (await settings()).apiUrl !== apiUrl;
   try {
     const body = await api("/api/v1/blacklist/domains");
+    if (await stale()) return;
     const domains = body.data.filter((d) => /^[a-z0-9.-]+\.[a-z]{2,63}$/.test(d));
     const old = await chrome.declarativeNetRequest.getDynamicRules();
     await chrome.declarativeNetRequest.updateDynamicRules({
@@ -126,6 +131,7 @@ async function refreshBlacklist() {
     });
     await chrome.storage.local.set({ blacklist: { count: domains.length, updated: new Date().toISOString(), error: null, disabled: false } });
   } catch (err) {
+    if (await stale()) return;
     const prev = (await chrome.storage.local.get({ blacklist: {} })).blacklist;
     await chrome.storage.local.set({ blacklist: { ...prev, error: String(err.message || err) } });
   }
