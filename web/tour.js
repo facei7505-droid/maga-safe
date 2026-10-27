@@ -24,7 +24,7 @@ function steps({ switchView, openCase, closeModal }) {
     },
     {
       title: `Кейс ${HERO_CASE}: одна сеть, три схемы`,
-      text: "Посты разных каналов связаны общими пруфами и реквизитами. Один скрин «выплаты» встречается 37 раз, в пяти копиях перерисована сумма.",
+      text: "Посты разных каналов связаны общими пруфами и реквизитами. Один и тот же скрин «выплаты» встречается больше 30 раз в разных каналах — это одна сеть.",
       run: async () => { closeModal(); await openCase(HERO_CASE); (await waitFor("#case .case-head"))?.scrollIntoView({ block: "start" }); },
     },
     {
