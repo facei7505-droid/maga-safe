@@ -511,3 +511,55 @@ def test_every_scheme_feature_has_a_kazakh_label() -> None:
     # все признаки, включая стоп-признаки легальности: их показывают и бот, и казахский дашборд
     missing = [f.id for f in FEATURES if f.id not in LABELS_KK]
     assert missing == [], "переведите признаки для казахского ответа бота и дашборда (pruf/bot/texts.py, LABELS_KK)"
+
+
+# ---------- вебхук без ручной настройки ----------
+def test_webhook_secret_is_derived_from_hmac_key_unless_set(tmp_path: Path) -> None:
+    derived = make_settings(tmp_path, telegram_secret="").webhook_secret()
+    assert len(derived) == 64 and derived == make_settings(tmp_path / "b", telegram_secret="").webhook_secret()
+    assert make_settings(tmp_path, telegram_secret=SECRET).webhook_secret() == SECRET
+    assert make_settings(tmp_path, telegram_secret="", hmac_key="").webhook_secret() == ""
+
+
+def _wait_webhook(client) -> dict:
+    import time
+    for _ in range(100):
+        bot = client.get("/api/v1/stats").json()["data"]["bot"]
+        if bot["webhook"]:
+            return bot
+        time.sleep(0.02)
+    raise AssertionError("вебхук не зарегистрирован")
+
+
+def test_server_registers_its_own_webhook_with_only_a_bot_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: на Render задан только токен бота; адрес сервера известен
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(HttpTelegramApi, "set_webhook", lambda self, url, secret: calls.append((url, secret)))
+    sent = []
+    monkeypatch.setattr(HttpTelegramApi, "send_message", lambda self, chat, text, reply_to=None, buttons=None: sent.append(text))
+
+    with _client(tmp_path, telegram_token="1:abc", telegram_secret="", public_url="https://pruf.example.com/") as client:
+        # Act
+        bot = _wait_webhook(client)
+        secret = calls[0][1]
+        answer = client.post("/api/v1/telegram/webhook", json=_msg(LOTTERY_RU.format(phone=KASPI_PHONE)),
+                             headers={"X-Telegram-Bot-Api-Secret-Token": secret})
+
+    # Assert: зарегистрирован свой адрес с выведенным секретом, и Telegram с этим секретом принимается
+    assert calls == [("https://pruf.example.com/api/v1/telegram/webhook", secret)] and len(secret) == 64
+    assert bot == {"on": True, "webhook": "ok"}
+    assert answer.json()["data"] == {"queued": True}
+
+
+def test_failed_webhook_registration_is_visible_and_harmless(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+
+    def refuse(self, url, secret):
+        raise RuntimeError("Telegram setWebhook: Unauthorized")
+
+    monkeypatch.setattr(HttpTelegramApi, "set_webhook", refuse)
+    with _client(tmp_path, telegram_token="1:bad", telegram_secret="", public_url="https://pruf.example.com") as client:
+        bot = _wait_webhook(client)
+        assert client.get("/api/v1/health").status_code == 200
+    assert bot == {"on": True, "webhook": "Telegram setWebhook: Unauthorized"}

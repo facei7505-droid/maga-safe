@@ -288,6 +288,9 @@ class HttpTelegramApi:
             raise RuntimeError(f"Telegram {method}: {body.get('description', 'ошибка')}")
         return body["result"]
 
+    def set_webhook(self, url: str, secret: str) -> None:
+        self._call("setWebhook", url=url, secret_token=secret, allowed_updates=["message", "callback_query"])
+
     def send_message(self, chat_id: int, text: str, reply_to: int | None = None,
                      buttons: list[tuple[str, str]] | None = None) -> None:
         params: dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}

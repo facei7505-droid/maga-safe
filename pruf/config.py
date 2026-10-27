@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import secrets
 from dataclasses import dataclass, field
@@ -31,6 +33,8 @@ class Settings:
     llm_daily_budget: int = field(default_factory=lambda: int(os.environ.get("PRUF_LLM_DAILY_BUDGET", "5000")))
     telegram_token: str = field(default_factory=lambda: os.environ.get("TELEGRAM_BOT_TOKEN", ""))
     telegram_secret: str = field(default_factory=lambda: os.environ.get("PRUF_TELEGRAM_SECRET", ""))
+    # публичный адрес сервера: по нему бот сам регистрирует вебхук; Render задаёт RENDER_EXTERNAL_URL сам
+    public_url: str = field(default_factory=lambda: os.environ.get("PRUF_PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL", ""))
     resolve_links: bool = field(default_factory=lambda: os.environ.get("PRUF_RESOLVE_LINKS", "") == "1")
     # PRUF_OCR=0 на хостинге с 512 МБ: модели OCR поднимают память сервера до 540–660 МБ
     ocr_enabled: bool = field(default_factory=lambda: os.environ.get("PRUF_OCR", "1") != "0")
@@ -50,6 +54,13 @@ class Settings:
     @property
     def blob_dir(self) -> Path:
         return self.data_dir / "blobs"
+
+    def webhook_secret(self) -> str:
+        """Секрет вебхука бота: PRUF_TELEGRAM_SECRET, а если он не задан — выводится из PRUF_HMAC_KEY.
+        Ключ на сервере постоянный, поэтому и секрет один и тот же после каждого перезапуска."""
+        if self.telegram_secret or not self.hmac_key:
+            return self.telegram_secret
+        return hmac.new(self.hmac_key.encode(), b"pruf-telegram-webhook", hashlib.sha256).hexdigest()
 
     def effective_hmac_key(self) -> bytes:
         if self.hmac_key:

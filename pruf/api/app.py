@@ -146,6 +146,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     report_limiter = RateLimiter(REPORTS_PER_MINUTE_PER_IP)  # токен расширения общий: жалобы ограничиваем по IP
     state: dict[str, Any] = {}
     bot_lock = threading.Lock()
+    webhook_secret = settings.webhook_secret()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -163,15 +164,19 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         else:
             start_state_keeper(state["pruf"])
         if settings.telegram_token:
-            if len(settings.telegram_secret) < MIN_WEBHOOK_SECRET or not settings.telegram_secret.replace("-", "").replace("_", "").isalnum():
+            if len(webhook_secret) < MIN_WEBHOOK_SECRET or not webhook_secret.replace("-", "").replace("_", "").isalnum():
                 log.warning("вебхук бота выключен: задайте PRUF_TELEGRAM_SECRET из %d+ символов [A-Za-z0-9_-]", MIN_WEBHOOK_SECRET)
             else:
                 logging.getLogger("httpx").setLevel(logging.WARNING)  # httpx пишет URL с токеном бота на INFO
-                state["bot"] = BotLogic(state["pruf"], HttpTelegramApi(settings.telegram_token), settings.max_upload_bytes)
+                state["bot_api"] = HttpTelegramApi(settings.telegram_token)
+                state["bot"] = BotLogic(state["pruf"], state["bot_api"], settings.max_upload_bytes)
                 # Обработка вне запроса: OCR и Whisper не занимают пул потоков API, Telegram сразу получает 200.
                 state["bot_pool"] = ThreadPoolExecutor(max_workers=BOT_WORKERS, thread_name_prefix="tg")
                 state["bot_pending"] = 0
                 state["bot_seen"] = deque(maxlen=2000)
+                if settings.public_url:
+                    # вебхук регистрируется сам: на Render достаточно вставить токен бота
+                    threading.Thread(target=register_webhook, args=(state["bot_api"],), name="tg-webhook", daemon=True).start()
         if settings.dev_mode:
             log.warning("PRUF_DEV_MODE=1: токены не обязательны, не используйте в проде")
         yield
@@ -182,6 +187,16 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         if "keeper" in state:
             state["keeper"].close()  # последние изменения — в снимок до закрытия базы
         state["pruf"].db.close()
+
+    def register_webhook(api: HttpTelegramApi) -> None:
+        url = settings.public_url.rstrip("/") + "/api/v1/telegram/webhook"
+        try:
+            api.set_webhook(url, webhook_secret)
+            state["bot_webhook"] = "ok"
+            log.info("вебхук бота зарегистрирован: %s", url)
+        except Exception as exc:  # noqa: BLE001 — бот не должен ронять сервер; причина видна в stats
+            state["bot_webhook"] = str(exc)[:200]
+            log.error("вебхук бота не зарегистрирован: %s", state["bot_webhook"])
 
     def seed_then_restore(p: Pruf) -> None:
         started = time.perf_counter()
@@ -470,6 +485,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
                    "capabilities": capabilities(p), "state": saved,
                    # посты демо-заливки (scripts/seed_demo.py): дашборд честно говорит, что они придуманы
                    "demo_posts": p.db.count_posts_from("seed"), "demo_error": state.get("seed_error"),
+                   "bot": {"on": "bot" in state, "webhook": state.get("bot_webhook")},
                    "quality": quality_report(p.settings.model_path)})
 
     @app.get("/api/v1/overview")
@@ -609,7 +625,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         bot = state.get("bot")
         got = request.headers.get("x-telegram-bot-api-secret-token", "")
         # Секрет проверяется до чтения тела; без бота или с чужим секретом ответ одинаковый.
-        if bot is None or not hmac.compare_digest(got.encode(), settings.telegram_secret.encode()):
+        if bot is None or not hmac.compare_digest(got.encode(), webhook_secret.encode()):
             limiter.check(f"tgfail:{request.client.host if request.client else 'unknown'}")
             raise HTTPException(status_code=404, detail="Не найдено")
         length = request.headers.get("content-length", "")

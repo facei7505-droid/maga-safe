@@ -27,6 +27,10 @@ services:
         generateValue: true
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Telegram-бот: токен от @BotFather. Больше ничего не нужно — секрет вебхука выводится из PRUF_HMAC_KEY,
+      # а адрес (RENDER_EXTERNAL_URL) сервер регистрирует в Telegram сам при старте.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
       - key: PRUF_LLM_MODEL
         value: claude-sonnet-5-5
       # Арбитр Claude включается сам, когда ANTHROPIC_API_KEY задан. 50 вызовов в сутки берегут баланс.
