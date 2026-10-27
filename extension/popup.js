@@ -24,8 +24,27 @@
       : bl.updated
         ? t(lang, "blacklistOk", { count: bl.count, when: new Date(bl.updated).toLocaleString(lang === "kk" ? "kk-KZ" : "ru-RU") })
         : t(lang, "blacklistNone");
+    renderSample(!bl.disabled && !bl.error ? bl.sample || [] : []);
     $("apiUrl").value = s.apiUrl;
     $("token").value = s.token;
+  }
+
+  // Домены из чёрного списка ссылками: клик открывает сайт, и правило показывает страницу-предупреждение
+  function renderSample(domains) {
+    const box = $("blacklistSample");
+    box.hidden = !domains.length;
+    box.replaceChildren();
+    if (!domains.length) return;
+    box.append(t(lang, "blacklistSample"));
+    for (const domain of domains) {
+      if (!/^[a-z0-9.-]+\.[a-z]{2,63}$/.test(domain)) continue;
+      const link = document.createElement("a");
+      link.href = "#";
+      link.textContent = domain;
+      link.style.marginLeft = "6px";
+      link.addEventListener("click", (e) => { e.preventDefault(); chrome.tabs.create({ url: "https://" + domain + "/" }); });
+      box.append(link);
+    }
   }
 
   $("save").addEventListener("click", async () => {

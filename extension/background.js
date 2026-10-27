@@ -94,6 +94,8 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const BLACKLIST_SAMPLE = 4; // домены в popup: проверить предупреждение одним кликом
+
 function blacklistRules(domains) {
   const warning = chrome.runtime.getURL("warning.html");
   return domains.slice(0, MAX_REGEX_RULES).map((domain, i) => ({
@@ -129,7 +131,8 @@ async function refreshBlacklist() {
       removeRuleIds: old.map((r) => r.id),
       addRules: blacklistRules(domains),
     });
-    await chrome.storage.local.set({ blacklist: { count: domains.length, updated: new Date().toISOString(), error: null, disabled: false } });
+    await chrome.storage.local.set({ blacklist: { count: domains.length, updated: new Date().toISOString(), error: null, disabled: false,
+      sample: domains.slice(0, BLACKLIST_SAMPLE) } });
   } catch (err) {
     if (await stale()) return;
     const prev = (await chrome.storage.local.get({ blacklist: {} })).blacklist;

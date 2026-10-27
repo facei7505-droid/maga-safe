@@ -167,6 +167,14 @@ def test_popup_shows_counters(context) -> None:
     page.wait_for_function("Number(document.getElementById('threats').textContent) >= 2", timeout=10_000)
     assert int(page.locator("#checked").text_content()) >= 2
     assert "1 доменов" in page.locator("#blacklist").text_content()
+    # домен из списка ссылкой: на демо предупреждение проверяется одним кликом
+    sample = page.locator("#blacklistSample a")
+    assert sample.all_text_contents() == ["joy-slots-kz.top"]
+    with ctx.expect_page() as opened:
+        sample.first.click()
+    warning = opened.value
+    warning.wait_for_url(re.compile(r"^chrome-extension://[a-z]+/warning\.html#"), timeout=10_000)
+    warning.close()
     page.close()
 
 
