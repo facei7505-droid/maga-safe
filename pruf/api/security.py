@@ -94,12 +94,26 @@ def require_analyst(request: Request, settings: Settings, limiter: RateLimiter) 
 
 
 def require_bank(request: Request, settings: Settings, limiter: RateLimiter) -> str:
+    """Токен банка. С PRUF_BANK_ALLOW_ANALYST=1, пока банкам токены не выданы, ленту открывает токен аналитика."""
     if settings.dev_mode and not settings.bank_tokens:
         limiter.check(f"dev:{_client(request)}")
         return "bank:dev"
-    if not settings.bank_tokens:
+    entries = _named_tokens(settings.bank_tokens, "bank")
+    if not entries and settings.analyst_token and settings.bank_allow_analyst:
+        entries = [(f"analyst-{name}", token) for name, token in _named_tokens(settings.analyst_token.split(","), "analyst")]
+    if not entries:
         raise HTTPException(status_code=503, detail="Сервер не настроен: задайте PRUF_BANK_TOKENS")
-    return "bank:" + _authorize(request, limiter, _named_tokens(settings.bank_tokens, "bank"), "bank")
+    return "bank:" + _authorize(request, limiter, entries, "bank")
+
+
+def require_extension(request: Request, settings: Settings, limiter: RateLimiter) -> str:
+    """Токен расширения ПРУФ Sentinel: только проверка реквизитов и чёрный список доменов."""
+    if settings.dev_mode and not settings.extension_tokens:
+        limiter.check(f"dev:{_client(request)}")
+        return "extension:dev"
+    if not settings.extension_tokens:
+        raise HTTPException(status_code=503, detail="Сервер не настроен: задайте PRUF_EXTENSION_TOKENS")
+    return "extension:" + _authorize(request, limiter, _named_tokens(settings.extension_tokens, "ext"), "extension")
 
 
 def sniff_upload(data: bytes, filename: str | None, content_type: str | None) -> tuple[str, str]:

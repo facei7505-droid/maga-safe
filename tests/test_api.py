@@ -364,7 +364,7 @@ def test_case_card_patch_and_export(with_case) -> None:
     assert card["posts"][0]["artifacts"] and card["posts"][0]["requisites"]
     assert card["families"] == [sorted([first["post_id"], second["post_id"]])]
     assert card["graph"]["nodes"]
-    assert patched.status_code == 200 and patched.json()["data"] == {"key": key, "status": "in_review"}
+    assert patched.status_code == 200 and patched.json()["data"] == {"key": key, "status": "in_review", "requisites_listed": 0}
     assert [c["key"] for c in status] == [key]
     assert export.status_code == 200 and export.headers["content-type"] == "application/zip"
     zf = zipfile.ZipFile(io.BytesIO(export.content))
@@ -460,7 +460,8 @@ def test_stats_report_capabilities(dev: TestClient) -> None:
     # Assert
     assert data["posts"] == 1 and data["levels"] == {"high": 1}
     assert data["cases"] == 1 and data["texts_indexed"] == 1
-    assert set(data["capabilities"]) == {"ocr", "whisper", "ml", "llm", "link_resolution"}
+    assert set(data["capabilities"]) == {"ocr", "ocr_off", "whisper", "qr", "ml", "llm", "link_resolution"}
+    assert data["demo_posts"] == 0  # пометка «демо-данные придуманы» только при демо-заливке
     assert data["capabilities"]["ml"] is False and data["capabilities"]["link_resolution"] is False
 
 
@@ -481,9 +482,17 @@ def test_bank_feed_requires_bank_token(secured: TestClient) -> None:
     assert row["tracks"] == ["lottery"] and row["cases"] and "match_key" not in row
 
 
-def test_bank_feed_without_tokens_outside_dev_is_503(tmp_path: Path) -> None:
+def test_bank_feed_without_bank_tokens_outside_dev_is_503(tmp_path: Path) -> None:
+    # Без явного PRUF_BANK_ALLOW_ANALYST токен аналитика ленту не открывает
     with _client(tmp_path, dev_mode=False, analyst_token=ANALYST, bank_tokens=()) as client:
-        assert client.get("/api/v1/bank/requisites", headers=_auth(BANK)).status_code == 503
+        assert client.get("/api/v1/bank/requisites", headers=_auth(ANALYST)).status_code == 503
+
+
+def test_analyst_token_opens_bank_feed_when_bank_tokens_are_not_set(tmp_path: Path) -> None:
+    # Сайт аналитика показывает ленту реквизитов даже без выданных банкам токенов
+    with _client(tmp_path, dev_mode=False, analyst_token=ANALYST, bank_tokens=(), bank_allow_analyst=True) as client:
+        assert client.get("/api/v1/bank/requisites", headers=_auth(ANALYST)).status_code == 200
+        assert client.get("/api/v1/bank/requisites", headers=_auth(BANK)).status_code == 401
 
 
 def test_bank_feed_filters_level_and_since(dev: TestClient) -> None:
@@ -515,5 +524,5 @@ def test_bank_check_finds_known_requisite(dev: TestClient) -> None:
 
     # Assert
     assert found["found"] is True and found["posts"] == 1 and found["tracks"] == ["lottery"]
-    assert unknown == {"found": False, "type": "phone"}
+    assert unknown == {"found": False, "type": "phone", "bank_outcomes": {"fraud_confirmed": 0, "legit_client": 0}}
     assert garbage.status_code == 400

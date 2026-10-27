@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "ПРУФ Sentinel",
+  "version": "0.2.0",
+  "description": "Предупреждает о признаках платных розыгрышей, скрытой рекламы казино и финансовых пирамид в Telegram Web, WhatsApp Web и Instagram.",
+  "permissions": ["storage", "alarms", "contextMenus", "notifications", "declarativeNetRequest"],
+  "host_permissions": ["https://web.telegram.org/*", "https://www.instagram.com/*", "https://web.whatsapp.com/*",
+                       "http://127.0.0.1/*", "http://localhost/*", "https://*.onrender.com/*"],
+  "optional_host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://web.telegram.org/*", "https://www.instagram.com/*", "https://web.whatsapp.com/*"],
+      "js": ["lib/extract.js", "lib/i18n.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "ПРУФ Sentinel" },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "web_accessible_resources": [{ "resources": ["warning.html", "warning.js", "pages.css", "lib/i18n.js"], "matches": ["<all_urls>"] }],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; frame-ancestors 'none'" }
+}

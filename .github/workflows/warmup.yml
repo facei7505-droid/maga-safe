@@ -1,0 +1,37 @@
+# Перед питчем: Actions → warmup → Run workflow. Будит сервер на Render, ждёт демо-данные, проходит демо-путь
+# и держит сервер бодрым заданное число минут. Нужен секрет репозитория PRUF_TOKEN (токен аналитика);
+# адрес — переменная PRUF_URL или поле при запуске.
+name: warmup
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Адрес сервера (по умолчанию переменная PRUF_URL или pruf-bba7.onrender.com)"
+        required: false
+      keep_awake_minutes:
+        description: "Сколько минут держать сервер бодрым после разогрева (до 300)"
+        required: false
+        default: "120"
+
+permissions:
+  contents: read
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "httpx>=0.27"
+      - name: Разогрев и демо-путь
+        env:
+          PRUF_TOKEN: ${{ secrets.PRUF_TOKEN }}
+          PRUF_URL: ${{ inputs.url || vars.PRUF_URL || 'https://pruf-bba7.onrender.com' }}
+          KEEP: ${{ inputs.keep_awake_minutes }}
+        run: |
+          keep=$(( ${KEEP:-120} > 300 ? 300 : ${KEEP:-120} ))
+          python scripts/warmup.py --url "$PRUF_URL" --wait 900 --keep-awake "$keep"

@@ -12,3 +12,7 @@ reports/
 .coverage
 htmlcov/
 models/*.joblib
+*.session
+*.session-journal
+# страницы и ключи проверки разметки: в них могут быть реальные посты
+audit/

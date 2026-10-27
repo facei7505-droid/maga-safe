@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+.claude
+data
+# локальные модели не нужны: образ ставит models/prod или обучает свою
+models/*
+!models/prod
+reports
+docs
+tests
+__pycache__
+*.pyc
+.coverage
+htmlcov

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 from dataclasses import asdict, dataclass, field
@@ -28,6 +29,16 @@ TRACK_TEMPLATES = {"lottery": T.LOTTERY, "casino": T.CASINO, "pyramid": T.PYRAMI
 HELD_OUT_EVERY = 4  # каждый 4-й шаблон отложен для теста
 _HOMO = {"а": "a", "о": "o", "е": "e", "р": "p", "с": "c", "х": "x"}
 _EMOJI = ["🔥", "💰", "✅", "👇", "🎁", "💸", "⚡", "😱"]
+# Нейтральные имена каналов, общие для схем и легальных постов: имя канала не подсказывает метку
+_CITIES = ["almaty", "astana", "shymkent", "karaganda", "aktobe", "taraz", "pavlodar", "semey", "atyrau",
+           "kostanay", "oral", "turkestan", "kyzylorda", "aktau", "ekb", "petropavl"]
+_TOPICS = ["news", "life", "online", "today", "info", "chat", "market", "vibe", "kz", "24", "live", "city"]
+
+
+def neutral_channel(seed: str) -> str:
+    """Детерминированное «городское» имя канала; не расходует rng, поэтому датасет не меняется."""
+    h = int.from_bytes(hashlib.sha256(seed.encode()).digest()[:4], "big")
+    return f"@{_CITIES[h % len(_CITIES)]}_{_TOPICS[(h // 16) % len(_TOPICS)]}"
 _NAMES = ["Айгерим С.", "Нурлан К.", "Дана Б.", "Ерлан Т.", "Асель М.", "Тимур Ж.", "Мадина Р."]
 START = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
@@ -149,7 +160,7 @@ class Generator:
                     kaspi=f"kaspi.kz/pay/{rng.choice(['bonus', 'shop', 'invest', 'lucky'])}{rng.randint(100, 9999)}",
                     domain=rng.choice(T.CASINO_DOMAINS if track == "casino" else T.SCAM_DOMAINS),
                     promo=rng.choice(["BONUS", "WIN", "KZ", "LUCKY", "TOP"]) + str(rng.randint(100, 999)),
-                    channels=[f"@{track}_{cid}_{k}" for k in range(rng.randint(2, 5))],
+                    channels=[neutral_channel(f"{cid}:{k}") for k in range(rng.randint(2, 5))],
                     receipt=Receipt(f"{rng.randint(50, 900)} 000", rng.choice(_NAMES), f"{rng.randint(1, 28):02d}.10.2026",
                                     f"{rng.randint(8, 23)}:{rng.randint(10, 59)}", str(rng.randint(1_000_000, 9_999_999))),
                     split="test" if i % 3 == 2 else "train",
@@ -201,7 +212,7 @@ class Generator:
                 text = obfuscate(text, rng)
             pid = self._next_id("l")
             post = SynthPost(id=pid, text=text, label="legit", lang=lang, template=f"legit:{idx}", split=split,
-                             channel=f"@city_{rng.randint(1, 40)}", posted_at=self._when())
+                             channel=neutral_channel(f"legit:{rng.randint(1, 40)}"), posted_at=self._when())
             if rng.random() < image_rate:
                 r = Receipt(f"{rng.randint(1, 99)} {rng.randint(100, 999)}", "Магазин " + str(rng.randint(1, 50)),
                             f"{rng.randint(1, 28):02d}.10.2026", f"{rng.randint(8, 23)}:{rng.randint(10, 59)}",

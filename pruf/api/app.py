@@ -10,9 +10,11 @@ import json
 import logging
 import os
 import threading
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,23 +29,31 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from pruf.api.security import RateLimiter, require_analyst, require_bank, sniff_upload
+from pruf import demo_boot
+from pruf.analytics import overview
+from pruf.api.security import RateLimiter, require_analyst, require_bank, require_extension, sniff_upload
 from pruf.bot.telegram import BotLogic, HttpTelegramApi
+from pruf.bot.texts import LABELS_KK
 from pruf.config import ROOT, Settings, load_settings
 from pruf.export import build_evidence_package
 from pruf.graph.builder import CaseGraph, artifact_timeline
-from pruf.normalize.audio import whisper_available
+from pruf.inspect import REPORT_PLATFORMS, Inspector
+from pruf.lists import apply_case_decision, case_money_keys, export_ref, list_info, mask, to_csv
+from pruf.normalize.audio import transcribe, whisper_available
 from pruf.normalize.ocr import ocr_available
+from pruf.normalize.qr import qr_available
 from pruf.normalize.requisites import extract_requisites
 from pruf.pipeline import Pruf, Submission, Upload
+from pruf.quality import quality_report
 from pruf.registry.forensics import ela_heatmap_png
 from pruf.registry.hashing import open_image
 from pruf.storage.db import CASE_STATUSES
+from pruf.storage.state import StateKeeper, backend_for
 
 log = logging.getLogger(__name__)
 MAX_FILES = 6
@@ -52,8 +62,13 @@ MIN_WEBHOOK_SECRET = 32
 WEBHOOK_MAX_BODY = 1024 * 1024  # update Telegram меньше 1 МБ, файлы приходят ссылками
 BOT_WORKERS = 2
 BOT_MAX_PENDING = 50
+SEED_RETRY_AFTER = 10  # секунд: страница «Демо загружается» и 503 API во время фоновой заливки
+SEED_JOIN_TIMEOUT = 30  # остановка сервера ждёт заливку не дольше
 WEB_DIR = ROOT / "web"
 
+
+JSON_MAX_BODY = 256 * 1024
+CSV_MAX_ROWS = 20_000
 
 def ok(data: Any, **meta: Any) -> dict[str, Any]:
     return {"success": True, "data": data, "error": None, "meta": meta or None}
@@ -70,10 +85,54 @@ class RequisiteCheck(BaseModel):
     value: str = Field(min_length=5, max_length=64)
 
 
+class BankFeedbackIn(BaseModel):
+    """Исход по реквизиту от банка: без имён клиентов и сумм, только сам реквизит и вывод банка."""
+    value: str = Field(min_length=5, max_length=64)
+    outcome: str = Field(pattern="^(fraud_confirmed|legit_client)$")
+
+
 def capabilities(p: Pruf) -> dict[str, Any]:
     """Что реально работает: аналитик видит, если OCR, Whisper, ML или LLM недоступны."""
-    return {"ocr": ocr_available(), "whisper": whisper_available(), "ml": p.detector.has_classifier,
+    return {"ocr": p.settings.ocr_enabled and ocr_available(), "ocr_off": not p.settings.ocr_enabled, "whisper": whisper_available(), "qr": p.settings.qr_enabled and qr_available(),
+            "ml": p.detector.has_classifier,
             "llm": p.detector.llm_state(), "link_resolution": p.settings.resolve_links}
+
+
+class InspectIn(BaseModel):
+    """Только извлечённое из поста: реквизиты, ссылки, хэш текста, номера признаков. Без текста."""
+    requisites: list[str] = Field(default_factory=list, max_length=10)
+    links: list[str] = Field(default_factory=list, max_length=20)
+    text_hash: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
+    cues: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("requisites", "cues")
+    @classmethod
+    def _short(cls, items: list[str]) -> list[str]:
+        if any(len(i) > 64 for i in items):
+            raise ValueError("слишком длинное значение")
+        return items
+
+    @field_validator("links")
+    @classmethod
+    def _url(cls, items: list[str]) -> list[str]:
+        if any(len(i) > 2048 for i in items):
+            raise ValueError("слишком длинная ссылка")
+        return items
+
+
+REPORTS_PER_MINUTE_PER_IP = 5
+
+
+class ReportIn(InspectIn):
+    """Жалоба «Сообщить в ПРУФ»: то же извлечённое, что для проверки, плюс площадка и случайный id установки."""
+    text_hash: str = Field(pattern="^[0-9a-f]{64}$")
+    platform: str = Field(default="other", max_length=16)
+    install_id: str = Field(min_length=8, max_length=64, pattern="^[A-Za-z0-9-]+$")
+
+    @field_validator("platform")
+    @classmethod
+    def _platform(cls, value: str) -> str:
+        return value if value in REPORT_PLATFORMS else "other"
 
 
 class CaseUpdate(BaseModel):
@@ -84,8 +143,10 @@ class CaseUpdate(BaseModel):
 def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> FastAPI:
     settings = settings or load_settings()
     limiter = RateLimiter(settings.rate_limit_per_minute)
+    report_limiter = RateLimiter(REPORTS_PER_MINUTE_PER_IP)  # токен расширения общий: жалобы ограничиваем по IP
     state: dict[str, Any] = {}
     bot_lock = threading.Lock()
+    webhook_secret = settings.webhook_secret()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -94,30 +155,88 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             raise RuntimeError("ПРУФ MVP работает в одном процессе: уберите --workers / WEB_CONCURRENCY")
         state["pruf"] = pruf or Pruf(settings)
         state["graph"] = CaseGraph(state["pruf"].db)
+        state["inspector"] = Inspector(state["pruf"].db, state["pruf"].settings.effective_hmac_key())
+        if settings.seed_demo and state["pruf"].db.count_posts() == 0:
+            # порт открыт сразу, демо заливается в фоне; решения людей восстанавливаются поверх демо после заливки
+            state["seeding"] = True
+            state["seeder"] = threading.Thread(target=seed_then_restore, args=(state["pruf"],), name="demo-seed", daemon=True)
+            state["seeder"].start()
+        else:
+            start_state_keeper(state["pruf"])
         if settings.telegram_token:
-            if len(settings.telegram_secret) < MIN_WEBHOOK_SECRET or not settings.telegram_secret.replace("-", "").replace("_", "").isalnum():
+            if len(webhook_secret) < MIN_WEBHOOK_SECRET or not webhook_secret.replace("-", "").replace("_", "").isalnum():
                 log.warning("вебхук бота выключен: задайте PRUF_TELEGRAM_SECRET из %d+ символов [A-Za-z0-9_-]", MIN_WEBHOOK_SECRET)
             else:
                 logging.getLogger("httpx").setLevel(logging.WARNING)  # httpx пишет URL с токеном бота на INFO
-                state["bot"] = BotLogic(state["pruf"], HttpTelegramApi(settings.telegram_token), settings.max_upload_bytes)
+                state["bot_api"] = HttpTelegramApi(settings.telegram_token)
+                state["bot"] = BotLogic(state["pruf"], state["bot_api"], settings.max_upload_bytes)
                 # Обработка вне запроса: OCR и Whisper не занимают пул потоков API, Telegram сразу получает 200.
                 state["bot_pool"] = ThreadPoolExecutor(max_workers=BOT_WORKERS, thread_name_prefix="tg")
                 state["bot_pending"] = 0
                 state["bot_seen"] = deque(maxlen=2000)
+                if settings.public_url:
+                    # вебхук регистрируется сам: на Render достаточно вставить токен бота
+                    threading.Thread(target=register_webhook, args=(state["bot_api"],), name="tg-webhook", daemon=True).start()
         if settings.dev_mode:
             log.warning("PRUF_DEV_MODE=1: токены не обязательны, не используйте в проде")
         yield
+        if "seeder" in state:
+            state["seeder"].join(SEED_JOIN_TIMEOUT)
         if "bot_pool" in state:
             state["bot_pool"].shutdown(wait=True)
+        if "keeper" in state:
+            state["keeper"].close()  # последние изменения — в снимок до закрытия базы
         state["pruf"].db.close()
+
+    def register_webhook(api: HttpTelegramApi) -> None:
+        url = settings.public_url.rstrip("/") + "/api/v1/telegram/webhook"
+        try:
+            api.set_webhook(url, webhook_secret)
+            state["bot_webhook"] = "ok"
+            log.info("вебхук бота зарегистрирован: %s", url)
+        except Exception as exc:  # noqa: BLE001 — бот не должен ронять сервер; причина видна в stats
+            state["bot_webhook"] = str(exc)[:200]
+            log.error("вебхук бота не зарегистрирован: %s", state["bot_webhook"])
+
+    def seed_then_restore(p: Pruf) -> None:
+        started = time.perf_counter()
+        try:
+            demo_boot.seed(p)
+        except Exception:  # noqa: BLE001 — сервер работает и без демо, ошибка в логе
+            log.exception("демо-данные не созданы")
+            state["seed_error"] = "демо-данные не созданы, подробности в логе сервера"
+        start_state_keeper(p)
+        p.version += 1  # новые посты и решения: граф и проверка пересоберутся
+        state["seeding"] = False
+        log.info("демо готово за %.1f с", time.perf_counter() - started)
+
+    def start_state_keeper(p: Pruf) -> None:
+        try:
+            backend = backend_for(p.settings.state_url)
+        except Exception as exc:  # noqa: BLE001 — без хранилища сервер работает, как раньше, но это видно в stats
+            log.error("хранилище состояния недоступно, решения людей не сохраняются: %s", exc)
+            state["state_error"] = f"{type(exc).__name__}: {exc}"[:200]
+            return
+        if backend is None:
+            return
+        keeper = StateKeeper(p.db, backend)
+        if keeper.restore():
+            p.version += 1  # статусы кейсов и списки поменялись: граф и проверка пересоберутся
+        p.db.on_change = keeper.changed
+        state["keeper"] = keeper
 
     app = FastAPI(title="ПРУФ API", version="0.1.0", lifespan=lifespan)
     max_body = MAX_FILES * settings.max_upload_bytes + 256 * 1024
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
+        if state.get("seeding") and not request.url.path.startswith("/static/"):
+            return seeding_response(request.url.path)
         length = request.headers.get("content-length")
-        if length is not None and (not length.isdigit() or int(length) > max_body):
+        # Тело читается и разбирается до проверки токена, поэтому большие тела принимаем только там,
+        # где они нужны (приём файлов); JSON-маршрутам хватает 256 КБ.
+        limit = {"/api/v1/analyze": max_body, "/api/v1/telegram/webhook": WEBHOOK_MAX_BODY}.get(request.url.path, JSON_MAX_BODY)
+        if length is not None and (not length.isdigit() or int(length) > limit):
             return JSONResponse({"success": False, "data": None, "error": "Запрос слишком большой", "meta": None}, status_code=413)
         if request.method in ("POST", "PUT", "PATCH") and length is None and \
                 request.headers.get("transfer-encoding", "").lower() == "chunked":
@@ -132,11 +251,27 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         return response
 
+    def seeding_response(path: str) -> Response:
+        headers = {"Retry-After": str(SEED_RETRY_AFTER), "Cache-Control": "no-store"}
+        if path.startswith("/api/"):
+            data = {"status": "seeding"} if path == "/api/v1/health" else None
+            return JSONResponse({"success": False, "data": data, "error": "Демо загружается, повторите через минуту", "meta": None},
+                                status_code=503, headers=headers)
+        return HTMLResponse(demo_boot.LOADING_PAGE, status_code=503, headers=headers)
+
     def analyst(request: Request) -> str:
         return require_analyst(request, settings, limiter)
 
     def bank(request: Request) -> str:
         return require_bank(request, settings, limiter)
+
+    def extension(request: Request) -> str:
+        return require_extension(request, settings, limiter)
+
+    def inspector() -> Inspector:
+        ins: Inspector = state["inspector"]
+        ins.refresh(state["pruf"].version)
+        return ins
 
     def core() -> Pruf:
         return state["pruf"]
@@ -195,8 +330,16 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
                 result = core().ingest(Submission(text=text, uploads=tuple(uploads), transcript=transcript,
                                                   channel=channel, posted_at=posted_at, source="dashboard"))
             else:  # проверка без сохранения: файл не попадает в реестр
+                audio = next((u for u in uploads if u.kind == "audio"), None)
+                if audio and not transcript:
+                    transcript = transcribe(audio.data, "." + audio.ext)
                 result = core().check(text, images=tuple(u.data for u in uploads if u.kind == "image"),
                                       transcript=transcript)
+                if audio and not transcript:
+                    # Без этого голосовое молча выпадало, а ответ выглядел как «низкий риск»
+                    analysis = result["analysis"]
+                    analysis["degraded"] = [*analysis.get("degraded", []), {
+                        "component": "whisper", "reason": "Голосовое не расшифровано: проверены только текст и изображения"}]
         except Image.DecompressionBombError as exc:
             raise HTTPException(status_code=413, detail="Изображение слишком большое") from exc
         except (UnidentifiedImageError, ValueError, OSError) as exc:  # OSError: обрезанный или битый файл
@@ -242,17 +385,26 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             posts.append(post)
         status = p.db.case_statuses().get(key, {"status": "new", "note": None})
         return ok({"case": case.to_dict(), "status": status, "posts": posts, "graph": g.subgraph(case.post_ids),
-                   "families": g.families(case.post_ids)})
+                   "families": g.families(case.post_ids), "network": g.case_network(key),
+                   "money_requisites": len(case_money_keys(p.db, case.post_ids))})
+
+    @app.get("/api/v1/networks")
+    def list_networks(limit: int = Query(20, ge=1, le=100), actor: str = Depends(analyst)):
+        """Сети каналов с общими реквизитами и ключевой реквизит каждой: что заблокировать в первую очередь."""
+        items = graph().networks()
+        return ok(items[:limit], total=len(items), limit=limit)
 
     @app.patch("/api/v1/cases/{key}")
     def update_case(key: str, body: CaseUpdate, actor: str = Depends(analyst)):
         if body.status not in CASE_STATUSES:
             raise HTTPException(status_code=400, detail="Статус: " + ", ".join(CASE_STATUSES))
-        if not graph().case(key):
+        case = graph().case(key)
+        if not case:
             raise HTTPException(status_code=404, detail="Кейс не найден")
         core().db.set_case_status(key, body.status, body.note, actor)
         core().db.audit(actor, "case_status", f"{key}:{body.status}")
-        return ok({"key": key, "status": body.status})
+        listed = apply_case_decision(core().db, key, case.post_ids, body.status, actor, (c.key for c in graph().cases()))
+        return ok({"key": key, "status": body.status, "requisites_listed": listed})
 
     @app.get("/api/v1/cases/{key}/export")
     def export_case(key: str, actor: str = Depends(analyst)):
@@ -326,28 +478,61 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     def stats(actor: str = Depends(analyst)):
         p = core()
         g = graph()
+        keeper = state.get("keeper")
+        saved = keeper.info() if keeper else {"backend": None, "error": state.get("state_error")}
         return ok({"posts": p.db.count_posts(), "levels": p.db.level_counts(), "cases": len(g.cases()),
                    "images_indexed": len(p.registry.images), "texts_indexed": len(p.registry.texts),
-                   "capabilities": capabilities(p)})
+                   "capabilities": capabilities(p), "state": saved,
+                   # посты демо-заливки (scripts/seed_demo.py): дашборд честно говорит, что они придуманы
+                   "demo_posts": p.db.count_posts_from("seed"), "demo_error": state.get("seed_error"),
+                   "bot": {"on": "bot" in state, "webhook": state.get("bot_webhook")},
+                   "quality": quality_report(p.settings.model_path)})
+
+    @app.get("/api/v1/overview")
+    def overview_view(actor: str = Depends(analyst)):
+        g = graph()
+        return ok(overview(core().db, [c.key for c in g.cases()], g.case_for_post))
 
     # ---------- банки ----------
-    @app.get("/api/v1/bank/requisites")
-    def bank_feed(since: str | None = Query(default=None, max_length=40),
-                  min_level: str = Query(default="medium", pattern="^(medium|high)$"),
-                  limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0),
-                  actor: str = Depends(bank)):
-        rows = core().db.requisite_feed(since, min_level, limit, offset)
+    def feed_rows(since: str | None, min_level: str, limit: int, offset: int, list_name: str | None) -> list[dict[str, Any]]:
+        rows = core().db.requisite_feed(since, min_level, limit, offset, list_name)
         g = graph()
         feed = []
         for r in rows:
             post_ids = core().db.posts_with_requisite(r["key"])
             cases = sorted({c for c in (g.case_for_post(pid) for pid in post_ids) if c})
-            feed.append({"id": r["id"], "type": r["kind"], "value": r["display"], "max_score": r["max_score"], "posts": r["posts"],
-                         "tracks": sorted(set((r["tracks"] or "").split(",")) - {""}), "cases": cases,
+            feed.append({"id": r["id"], "key": r["key"], "type": r["kind"], "value": r["display"], "max_score": r["max_score"],
+                         "posts": r["posts"], "tracks": sorted(set((r["tracks"] or "").split(",")) - {""}), "cases": cases,
                          "first_seen": r["first_seen"], "last_seen": r["last_seen"],
+                         **list_info(r["list"], r["decided"], r["grey_since"]),
                          "note": "Найдены признаки использования реквизита в схемах; не является основанием для блокировки без проверки"})
+        return feed
+
+    @app.get("/api/v1/bank/requisites")
+    def bank_feed(since: str | None = Query(default=None, max_length=40),
+                  min_level: str = Query(default="medium", pattern="^(medium|high)$"),
+                  list_name: str | None = Query(default=None, alias="list", pattern="^(grey|black|cleared)$"),
+                  limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0),
+                  actor: str = Depends(bank)):
+        feed = [{k: v for k, v in row.items() if k != "key"} for row in feed_rows(since, min_level, limit, offset, list_name)]
         core().db.audit(actor, "bank_feed", f"{len(feed)} rows")
         return ok(feed, limit=limit, offset=offset)
+
+    @app.get("/api/v1/bank/requisites.csv")
+    def bank_feed_csv(since: str | None = Query(default=None, max_length=40),
+                      min_level: str = Query(default="medium", pattern="^(medium|high)$"),
+                      list_name: str | None = Query(default=None, alias="list", pattern="^(grey|black|cleared)$"),
+                      actor: str = Depends(bank)):
+        """Выгрузка для обмена (Антифрод-центр, банки): HMAC-ссылка и маска вместо номера, статус, срок, основание."""
+        key = core().settings.effective_hmac_key()
+        found = feed_rows(since, min_level, CSV_MAX_ROWS + 1, 0, list_name)
+        rows = [{**r, "ref": export_ref(r["key"], key), "value_masked": mask(r["type"], r["value"]),
+                 "cases": " ".join(r["cases"]), "reason": r["list_reason"]} for r in found[:CSV_MAX_ROWS]]
+        core().db.audit(actor, "bank_feed_csv", f"{len(rows)} rows")
+        # Обрезанную выгрузку видно по заголовку: тогда выгружать частями через since
+        return Response(to_csv(rows), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="pruf_requisites.csv"', "Cache-Control": "no-store",
+                                 "X-PRUF-Truncated": "1" if len(found) > CSV_MAX_ROWS else "0"})
 
     @app.post("/api/v1/bank/check")
     def bank_check(body: RequisiteCheck, actor: str = Depends(bank)):
@@ -357,12 +542,82 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             raise HTTPException(status_code=400, detail="Не распознан реквизит: карта, телефон +7, IBAN KZ или ссылка Kaspi")
         found = core().db.lookup_requisite(reqs[0].key)
         core().db.audit(actor, "bank_check", reqs[0].kind)
+        # что сказали другие банки (без названий): «два банка подтвердили мошенничество» весомее любого признака
+        outcomes = core().db.bank_outcomes(reqs[0].key)
         if not found:
-            return ok({"found": False, "type": reqs[0].kind})
-        return ok({"found": True, "type": found["kind"], "value": found["display"], "posts": found["posts"],
+            return ok({"found": False, "type": reqs[0].kind, "bank_outcomes": outcomes})
+        return ok({"found": True, "type": found["kind"], "value": found["display"], "posts": found["posts"], "bank_outcomes": outcomes,
                    "max_score": found["max_score"], "tracks": sorted(set((found["tracks"] or "").split(",")) - {""}),
-                   "first_seen": found["first_seen"],
+                   "first_seen": found["first_seen"], **list_info(found["list"], found["decided"], found["grey_since"]),
                    "note": "Найдены признаки использования реквизита в схемах; требуется проверка банком"})
+
+    @app.post("/api/v1/bank/feedback")
+    def bank_feedback_post(body: BankFeedbackIn, actor: str = Depends(bank)):
+        """Банк сообщает исход: перевод на реквизит оказался мошенничеством или получатель — честный клиент.
+        Это подсказка аналитику, а не решение: список и оценку меняет только аналитик."""
+        reqs = extract_requisites(body.value, core().settings.effective_hmac_key())
+        if not reqs:
+            raise HTTPException(status_code=400, detail="Не распознан реквизит: карта, телефон +7, IBAN KZ или ссылка Kaspi")
+        req = reqs[0]
+        core().db.set_bank_feedback(bank=actor, key=req.key, kind=req.kind, display=mask(req.kind, req.display), outcome=body.outcome)
+        core().db.audit(actor, "bank_feedback", f"{req.kind}:{body.outcome}")
+        return ok({"type": req.kind, "outcome": body.outcome, "recorded": True})
+
+    @app.get("/api/v1/bank/feedback")
+    def bank_feedback_list(limit: int = Query(default=200, ge=1, le=1000), actor: str = Depends(analyst)):
+        rows = core().db.bank_feedback_list(limit)
+        return ok([{"type": r["kind"], "value": r["display"], "fraud_confirmed": r["fraud_confirmed"],
+                    "legit_client": r["legit_client"], "banks": r["banks"], "last": r["last"],
+                    "in_registry": bool(r["in_registry"])} for r in rows], total=len(rows))
+
+    # ---------- расширение ПРУФ Sentinel ----------
+    @app.post("/api/v1/inspect")
+    def inspect_post(body: InspectIn, actor: str = Depends(extension)):
+        """Риск поста по извлечённым признакам; текст поста сюда не приходит и ничего не сохраняется."""
+        return ok(inspector().inspect(body.requisites, body.links, body.text_hash, body.cues))
+
+    @app.post("/api/v1/reports")
+    def report_post(body: ReportIn, request: Request, actor: str = Depends(extension)):
+        """Жалоба пользователя. Кто жалуется, хранится только как HMAC от токена и id установки."""
+        report_limiter.check(f"report:{request.client.host if request.client else 'unknown'}")
+        # Месячная эпоха: жалобы одного человека не склеиваются в профиль дольше месяца
+        epoch = time.strftime("%Y-%m", time.gmtime())
+        reporter = hmac.new(core().settings.effective_hmac_key(), f"{actor}|{body.install_id}|{epoch}".encode(), "sha256").hexdigest()[:24]
+        try:
+            accepted = inspector().report(reporter, body.platform, body.requisites, body.links, body.text_hash, body.cues)
+        except ValueError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
+        core().db.audit(actor, "user_report", body.platform)
+        return ok({"accepted": accepted})
+
+    @app.get("/api/v1/reports")
+    def reports_list(limit: int = Query(default=100, ge=1, le=500), actor: str = Depends(analyst)):
+        """Реквизиты из жалоб: сначала те, на которые жаловалось больше разных людей."""
+        db = core().db
+        rows = [{"type": r["kind"], "value": r["display"], "reporters": r["reporters"], "reports": r["reports"],
+                 "platforms": sorted(set((r["platforms"] or "").split(",")) - {""}), "last_report": r["last_report"],
+                 "in_registry": bool(r["in_registry"]), "trusted_reporters": r["trusted_reporters"],
+                 "trust": round(r["trust"], 2)} for r in db.reported_requisites(limit)]
+        return ok(rows, total=db.report_count())
+
+    @app.get("/api/v1/blacklist/domains")
+    def blacklist(actor: str = Depends(extension)):
+        domains = inspector().blacklist()
+        return ok(domains, total=len(domains), version=core().version)
+
+    # ---------- разведчик ----------
+    @app.get("/api/v1/bot/feedback")
+    def bot_feedback(days: int = Query(default=30, ge=1, le=365), actor: str = Depends(analyst)):
+        """Признаки, которые пользователи бота оспорили кнопкой «Это не мошенничество»: очередь на ревью словаря."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+        db = core().db
+        return ok(db.disputed_features(since), total=db.bot_feedback_count(), days=days)
+
+    @app.get("/api/v1/scout")
+    def scout_view(actor: str = Depends(analyst)):
+        """Каналы и связи, найденные разведчиком (python -m pruf.scout)."""
+        db = core().db
+        return ok({"channels": db.scout_channels(), "edges": db.scout_edges(), "last_run": db.scout_last_run()})
 
     # ---------- Telegram webhook ----------
     @app.post("/api/v1/telegram/webhook")
@@ -370,7 +625,7 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
         bot = state.get("bot")
         got = request.headers.get("x-telegram-bot-api-secret-token", "")
         # Секрет проверяется до чтения тела; без бота или с чужим секретом ответ одинаковый.
-        if bot is None or not hmac.compare_digest(got.encode(), settings.telegram_secret.encode()):
+        if bot is None or not hmac.compare_digest(got.encode(), webhook_secret.encode()):
             limiter.check(f"tgfail:{request.client.host if request.client else 'unknown'}")
             raise HTTPException(status_code=404, detail="Не найдено")
         length = request.headers.get("content-length", "")
@@ -384,12 +639,14 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
             raise HTTPException(status_code=400, detail="Некорректный update")
         uid = update.get("update_id")
         with bot_lock:
-            if uid in state["bot_seen"]:
+            if isinstance(uid, int) and uid in state["bot_seen"]:
                 return ok({"queued": False, "reason": "duplicate"})  # Telegram повторил доставку
-            state["bot_seen"].append(uid)
             if state["bot_pending"] >= BOT_MAX_PENDING:
-                log.warning("очередь бота переполнена, update %s пропущен", uid)
-                return ok({"queued": False, "reason": "busy"})
+                # 503, а не 200: Telegram повторит доставку позже, сообщение пользователя не потеряется
+                log.warning("очередь бота переполнена, update %s отложен", uid)
+                raise HTTPException(status_code=503, detail="Бот занят, повторите позже")
+            if isinstance(uid, int):
+                state["bot_seen"].append(uid)
             state["bot_pending"] += 1
         state["bot_pool"].submit(run_bot, bot, update)
         return ok({"queued": True})
@@ -406,6 +663,12 @@ def create_app(settings: Settings | None = None, pruf: Pruf | None = None) -> Fa
     @app.get("/api/v1/health")
     def health():
         return ok({"status": "ok"})
+
+    @app.get("/api/v1/i18n/kk")
+    def labels_kk():
+        # подписи признаков для казахского дашборда: те же переводы, что у бота; без токена — это не данные
+        return JSONResponse({"success": True, "data": LABELS_KK, "error": None, "meta": None},
+                            headers={"Cache-Control": "public, max-age=3600"})
 
     if WEB_DIR.exists():
         app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")

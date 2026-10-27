@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="warnTitle">ПРУФ: опасный сайт</title>
+  <link rel="stylesheet" href="pages.css">
+  <style>
+    main { max-width: 560px; margin: 12vh auto; padding: 0 16px; }
+    .sign { font-size: 44px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="sign" aria-hidden="true">⚠</div>
+    <h1 data-i18n="warnHeading">Этот сайт в чёрном списке ПРУФ</h1>
+    <p><span data-i18n="warnDomainBefore">Домен </span><code id="domain">—</code><span data-i18n="warnDomainAfter"> встречался в постах с признаками платных розыгрышей, казино или финансовых пирамид.</span></p>
+    <p class="muted" data-i18n="warnAdvice">Не вводите данные карты и не переводите деньги. Если сомневаетесь, проверьте организатора по официальным источникам.</p>
+    <div class="actions">
+      <button class="primary" id="back" type="button" data-i18n="warnBack">Вернуться назад</button>
+      <button id="proceed" type="button" data-i18n="warnProceed">Всё равно перейти</button>
+    </div>
+  </main>
+  <script src="lib/i18n.js"></script>
+  <script src="warning.js"></script>
+</body>
+</html>

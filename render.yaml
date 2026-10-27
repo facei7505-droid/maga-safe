@@ -1,0 +1,52 @@
+# Render Blueprint: New → Blueprint → этот репозиторий. Токены генерирует Render, ключ Claude вводится вручную.
+# Бесплатный план без диска: демо-данные создаются заново при каждом запуске, в фоне (pruf/demo_boot.py);
+# сайт отвечает сразу и до готовности показывает «Демо загружается».
+# PRUF_BANK_TOKENS не задан, а PRUF_BANK_ALLOW_ANALYST=1: ленту реквизитов на сайте открывает токен аналитика.
+# Выдавая токены банкам, задайте PRUF_BANK_TOKENS и уберите PRUF_BANK_ALLOW_ANALYST.
+# PRUF_OCR=0: OCR скриншотов поднимает память до 540–660 МБ, бесплатные 512 МБ его не держат.
+# Сравнение картинок (PDQ) работает, суммы на скринах не читаются. На плане standard (2 ГБ) переменную можно убрать.
+# PRUF_STATE_URL: решения аналитика, жалобы, отметки бота и исходы банков переживают перезапуск (pruf/storage/state.py).
+# Бесплатный Postgres на Render ограничен по сроку: перед пилотом перейдите на платный план или свой Postgres.
+databases:
+  - name: pruf-state
+    plan: free
+    region: frankfurt
+services:
+  - type: web
+    name: pruf
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PRUF_ANALYST_TOKEN
+        generateValue: true
+      - key: PRUF_HMAC_KEY
+        generateValue: true
+      - key: PRUF_EXTENSION_TOKENS
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Telegram-бот: токен от @BotFather. Больше ничего не нужно — секрет вебхука выводится из PRUF_HMAC_KEY,
+      # а адрес (RENDER_EXTERNAL_URL) сервер регистрирует в Telegram сам при старте.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: PRUF_LLM_MODEL
+        value: claude-sonnet-5-5
+      # Арбитр Claude включается сам, когда ANTHROPIC_API_KEY задан. 50 вызовов в сутки берегут баланс.
+      - key: PRUF_LLM_DAILY_BUDGET
+        value: "50"
+      - key: PRUF_BANK_ALLOW_ANALYST
+        value: "1"
+      - key: PRUF_RATE_LIMIT
+        value: "120"
+      - key: PRUF_OCR
+        value: "0"
+      - key: PRUF_STATE_URL
+        fromDatabase:
+          name: pruf-state
+          property: connectionString
+      # Короткие ссылки (bit.ly, clck.ru) раскрываются HEAD-запросом до итогового домена: казино прячут зеркала за ними.
+      # Только для запросов аналитика с токеном; анонимный бот ссылки не раскрывает. Внутренние адреса запрещены.
+      - key: PRUF_RESOLVE_LINKS
+        value: "1"

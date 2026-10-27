@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
 import networkx as nx
 
+from pruf.graph import network
 from pruf.pipeline import ALLOWLIST_DOMAINS, RISKY_LEVELS
 from pruf.registry.imagediff import diff_tokens
 from pruf.registry.registry import changes_to_json, tokens_from_json
@@ -29,6 +31,11 @@ REBUILD_COST_FACTOR = 10.0
 HUB_MAX_POSTS = 50  # реквизит или домен в большем числе постов считается «хабом»
 HUB_MIN_POSTS = 5
 HUB_LOW_SHARE = 0.7  # ...или если 70%+ его постов без признаков схем
+# Насыщение составляющих приоритета кейса
+PRIORITY_MAX_CHANNELS = 12
+PRIORITY_MAX_REUSE = 20
+PRIORITY_MAX_RATE = 5.0  # постов с признаками в день
+PRIORITY_MIN_SERIES = 3
 
 
 @dataclass(frozen=True)
@@ -44,9 +51,53 @@ class CaseSummary:
     first_seen: str | None
     last_seen: str | None
     families: int
+    priority: float = 0.0
+    priority_reasons: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.__dict__, "post_ids": list(self.post_ids), "size": len(self.post_ids)}
+
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """Русское согласование: 1 канал, 3 канала, 5 каналов."""
+    tail = n % 100
+    form = many if 11 <= tail <= 14 else one if n % 10 == 1 else few if 2 <= n % 10 <= 4 else many
+    return f"{n} {form}"
+
+
+def _days_between(dates: list[str]) -> float:
+    try:
+        first, last = datetime.fromisoformat(dates[0]), datetime.fromisoformat(dates[-1])
+    except (IndexError, ValueError):
+        return 1.0
+    return max((last - first).total_seconds() / 86400, 1.0)
+
+
+def case_priority(score: float, risky_posts: int, channels: tuple[str, ...], tracks: tuple[str, ...],
+                  families: list, requisites: tuple[str, ...], dates: list[str]) -> tuple[float, tuple[str, ...]]:
+    """Приоритет кейса 0–100 для очереди: у многих кейсов балл риска упирается в 100, поэтому
+    очередь ранжируется по масштабу и скорости схемы. Каждая составляющая видна аналитику."""
+    reasons: list[str] = []
+    parts = {"risk": score * 0.35}
+    parts["reach"] = min(len(channels), PRIORITY_MAX_CHANNELS) / PRIORITY_MAX_CHANNELS * 20
+    if len(channels) >= 3:
+        reasons.append(plural(len(channels), "канал", "канала", "каналов"))
+    parts["tracks"] = (len(tracks) - 1) * 7.5 if tracks else 0.0
+    if len(tracks) > 1:
+        reasons.append(f"{len(tracks)} трека одной сети")  # треков не больше трёх
+    reused = max((len(f) for f in families), default=0)
+    parts["proofs"] = min(reused, PRIORITY_MAX_REUSE) / PRIORITY_MAX_REUSE * 10
+    if reused > 1:
+        reasons.append(f"пруф ×{reused}")
+    # Скорость считаем только для серии: один-два поста за день — ещё не «волна»
+    rate = risky_posts / _days_between(dates) if risky_posts >= PRIORITY_MIN_SERIES else 0.0
+    parts["speed"] = min(rate, PRIORITY_MAX_RATE) / PRIORITY_MAX_RATE * 10
+    if rate >= 1:
+        reasons.append(f"{rate:.1f} поста в день".replace(".", ","))
+    parts["money"] = 10.0 if requisites else 0.0
+    if requisites:
+        reasons.append("реквизиты для перевода")
+    return round(min(sum(parts.values()), 100.0), 1), tuple(reasons)
 
 
 class CaseGraph:
@@ -60,6 +111,9 @@ class CaseGraph:
         self.graph = nx.Graph()
         self._cases: dict[str, CaseSummary] = {}
         self._case_of_post: dict[int, str] = {}
+        self._networks: list[dict[str, Any]] | None = None
+        self._case_networks: dict[str, dict[str, Any]] = {}
+        self._generation = 0  # растёт при каждой сборке: по нему отбрасываем расчёт по старому графу
 
     def ensure(self, version: int, force: bool = False) -> None:
         """Пересобрать граф, если были новые посты. Маленький граф пересобирается сразу; большой
@@ -103,6 +157,9 @@ class CaseGraph:
         self.graph = g
         self._linking = nx.Graph((u, v) for u, v, d in g.edges(data=True) if d["type"] in LINK_EDGES)
         self._cases, self._case_of_post = self._compute_cases(g, posts)
+        self._networks = None  # считаются по первому запросу
+        self._case_networks = {}
+        self._generation += 1
 
     @staticmethod
     def _hubs(g: nx.Graph, posts: dict[int, dict]) -> set[str]:
@@ -157,24 +214,56 @@ class CaseGraph:
             tracks = Counter(posts[p]["track"] for p in core if posts[p]["track"])
             dates = sorted(posts[p]["posted_at"] for p in pids if posts[p]["posted_at"])
             sub = reuse.subgraph([f"post:{p}" for p in pids]) if reuse else nx.Graph()
-            fam = sum(1 for c in nx.connected_components(sub) if len(c) > 1)
+            fam_comps = [c for c in nx.connected_components(sub) if len(c) > 1]
+            fam = len(fam_comps)
+            channels = tuple(sorted({posts[p]["channel"] for p in pids if posts[p].get("channel")}))
+            requisites = tuple(sorted(g.nodes[n]["label"] for n in comp if n.startswith("req:")))
+            priority, reasons = case_priority(posts[top]["score"], len(core), channels, tuple(tracks), fam_comps,
+                                              requisites, dates)
             cases[key] = CaseSummary(
                 key=key, post_ids=tuple(pids), score=posts[top]["score"], level=posts[top]["level"],
                 tracks=tuple(t for t, _ in tracks.most_common()),
-                requisites=tuple(sorted(g.nodes[n]["label"] for n in comp if n.startswith("req:"))),
+                requisites=requisites,
                 domains=tuple(sorted(g.nodes[n]["label"] for n in comp if n.startswith("domain:"))),
-                channels=tuple(sorted({posts[p]["channel"] for p in pids if posts[p].get("channel")})),
+                channels=channels,
                 first_seen=dates[0] if dates else None, last_seen=dates[-1] if dates else None, families=fam,
+                priority=priority, priority_reasons=reasons,
             )
             for p in pids:
                 case_of.setdefault(p, key)
         return cases, case_of
 
     def cases(self) -> list[CaseSummary]:
-        return sorted(self._cases.values(), key=lambda c: (-c.score, -len(c.post_ids)))
+        return sorted(self._cases.values(), key=lambda c: (-c.priority, -c.score, -len(c.post_ids)))
 
     def case(self, key: str) -> CaseSummary | None:
         return self._cases.get(key)
+
+    def networks(self) -> list[dict[str, Any]]:
+        # Считаем вне блокировки, чтобы не держать приём постов; граф после сборки не меняется
+        with self._lock:
+            if self._networks is not None:
+                return self._networks
+            graph, generation = self.graph, self._generation
+        nets = network.networks(graph)
+        with self._lock:
+            if generation == self._generation:
+                self._networks = nets
+        return nets
+
+    def case_network(self, key: str) -> dict[str, Any] | None:
+        """Сеть каналов кейса и ключевые реквизиты: что заблокировать, чтобы отрезать схему от денег."""
+        with self._lock:
+            if key in self._case_networks:
+                return self._case_networks[key]
+            case, graph, generation = self._cases.get(key), self.graph, self._generation
+        if not case:
+            return None
+        net = network.describe(network.money_graph(graph, case.post_ids), key)
+        with self._lock:
+            if generation == self._generation:
+                self._case_networks[key] = net
+        return net
 
     def case_for_post(self, post_id: int) -> str | None:
         return self._case_of_post.get(post_id)

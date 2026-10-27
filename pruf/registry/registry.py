@@ -146,6 +146,15 @@ class ProofRegistry:
                 accepted.append((aid, dist))
         return sorted(accepted, key=lambda x: x[1])
 
+    def read_ocr(self, img: Image.Image) -> tuple[list[OcrToken], bool]:
+        """OCR без записи и без блокировок: можно звать до register_image(ocr_tokens=...)."""
+        if not self._ocr_enabled:
+            return [], True
+        try:
+            return run_ocr(img), True
+        except OcrUnavailable:
+            return [], False
+
     def _read_image(self, img: Image.Image, ocr_tokens: list[OcrToken] | None) -> tuple[np.ndarray, int, list[OcrToken], bool]:
         words, quality = pdq_hash(img)
         ocr_ok = True
@@ -223,7 +232,7 @@ class ProofRegistry:
         sha = sha256_bytes(data)
         self._blobs.put(sha, ext, data)
         artifact_id = self._db.create_artifact(post_id=post_id, kind="audio", sha256=sha, ext=ext)
-        same = [r for r in self._db.artifacts_by_sha(sha) if r["id"] != artifact_id]
+        same = [r for r in self._db.artifacts_by_sha(sha) if r["id"] != artifact_id and r["post_id"] != post_id]
         for r in same:
             self._db.add_match(artifact_id, r["id"], "audio", 0)
         return artifact_id, [r["post_id"] for r in same]

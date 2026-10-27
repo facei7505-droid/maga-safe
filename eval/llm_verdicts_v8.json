@@ -1,0 +1,1091 @@
+{
+ "b8_001": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная ежедневная доходность",
+    "quote": "күніне 3% табыс"
+   },
+   {
+    "track": "pyramid",
+    "label": "ежедневные выплаты за вклад",
+    "quote": "ақша күн сайын төленеді"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_004": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "пакеты взносов",
+    "quote": "Silver 30к Gold 100к Platinum 300к"
+   },
+   {
+    "track": "pyramid",
+    "label": "доход за приглашённых",
+    "quote": "с каждого приглашенного 10%"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_006": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "сигнальный бот для краш-игры",
+    "quote": "Ұшақ ойынында сигнал беретін бот"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_009": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "задания с выкупом и доходностью",
+    "quote": "выкупаешь товар своими и через 20 минут возвращаем + 15%"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_010": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "удвоение вложений",
+    "quote": "1 USDT салсаң 2 USDT қайтарады"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_012": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платная доставка приза",
+    "quote": "только доставка 3500"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_013": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_015": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "фриспины новым игрокам",
+    "quote": "50 бесплатных вращений каждому новому"
+   },
+   {
+    "track": "casino",
+    "label": "депозит и быстрый вывод",
+    "quote": "депозит от 1000тг вывод на любую карту за 5 минут"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_018": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "оплата за получение приза",
+    "quote": "delivery fee 4000 төлеу керек"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_019": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "вступительный взнос",
+    "quote": "кіру 30 000"
+   },
+   {
+    "track": "pyramid",
+    "label": "доход за привлечение людей",
+    "quote": "екі адам әкелсеңіз салғаныңыз қайтады"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_030": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковая победа в акции",
+    "quote": "вы стали победителем акции Дала Bonus Week"
+   },
+   {
+    "track": "lottery",
+    "label": "фишинговая ссылка для получения выигрыша",
+    "quote": "подтвердите карту dala-week.top"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_035": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_036": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_037": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "продажа договорных матчей",
+    "quote": "келисилген матч накты акпарат"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_039": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_044": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "оплата за активацию заработка",
+    "quote": "для активации аккаунта пополнить баланс от 10 000"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_045": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_046": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "скрин выигрыша в слотах",
+    "quote": "мои вчерашние иксы x47 на собаках"
+   },
+   {
+    "track": "casino",
+    "label": "промокод на фриспины",
+    "quote": "промокод DOG2026 даёт фриспины"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_047": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платная доставка приза",
+    "quote": "для получения оформите доставку 3900тг"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_048": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "плата за верификацию приза",
+    "quote": "жүлдені алу үшін верификация 2500"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_049": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "пополнение баланса для заработка",
+    "quote": "nado popolnit balans 7000 dlya starta"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_050": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_052": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "продажа договорных матчей",
+    "quote": "фикс на сегодня есть"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_054": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "покупка пакета и привлечение",
+    "quote": "покупаешь пакет за 75к и двоих приводишь"
+   },
+   {
+    "track": "pyramid",
+    "label": "доход с привлечённых",
+    "quote": "дальше с каждого капает"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_055": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "реклама букмекера с бонусом",
+    "quote": "ставим через бк по ссылке в шапке, там бонус +100%"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_056": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_058": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальный доход без опыта",
+    "quote": "Доход от 300 000 в первый месяц, опыт не нужен"
+   },
+   {
+    "track": "pyramid",
+    "label": "стартовый взнос",
+    "quote": "нужен только стартовый капитал от 40к"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_061": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "гарантированная доходность",
+    "quote": "профит 8-12% за круг гарантированно"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_062": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "удвоение криптовалюты",
+    "quote": "otpravlyaesh 0.05 btc poluchaesh 0.1 obratno"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_064": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_065": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "сигнальный бот для краш-игры",
+    "quote": "signal bot кейін береді"
+   },
+   {
+    "track": "casino",
+    "label": "кэшаут в краш-игре",
+    "quote": "kesh-out 2x"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_067": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платный билет на розыгрыш",
+    "quote": "тек 2000 салу керек билетке"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_068": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "приложение казино вне магазина",
+    "quote": "Скачай apk, в плеймаркете нет из-за блокировок"
+   },
+   {
+    "track": "casino",
+    "label": "приветственный бонус и фриспины",
+    "quote": "Приветственный пакет до 500 000 тг + 250 FS"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_070": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_071": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "передача победителя «менеджеру»",
+    "quote": "напиши менеджеру @priz_manager_kz он скажет что дальше"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_072": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "скрины регулярных выплат",
+    "quote": "выплата за эту неделю 87 400 ₸"
+   },
+   {
+    "track": "pyramid",
+    "label": "набор в команду с дефицитом мест",
+    "quote": "мест в команде осталось 5"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_075": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_076": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платные билеты в гиве",
+    "quote": "билет 1000 у меня в директе"
+   },
+   {
+    "track": "lottery",
+    "label": "шанс растёт с покупкой билетов",
+    "quote": "чем больше билетов тем больше шанс"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_077": {
+  "signals": [],
+  "legit_context": false
+ },
+ "b8_078": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый розыгрыш с начислением",
+    "quote": "По итогам квартального розыгрыша LuckyQaz вам начислено 75 000 бонусов"
+   },
+   {
+    "track": "lottery",
+    "label": "подозрительная ссылка активации",
+    "quote": "luckyqaz-bonus.top"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_081": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "платные сигналы на краш-игру",
+    "quote": "est signaly na raketku"
+   },
+   {
+    "track": "casino",
+    "label": "платный доступ к сигналам",
+    "quote": "dostup v kanal 5000 tg"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_082": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_083": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "зеркало обхода блокировок",
+    "quote": "жаңа айна сайт ашылды бұғатталмайды"
+   },
+   {
+    "track": "casino",
+    "label": "бонус за регистрацию",
+    "quote": "тіркелгенге 300% бонус"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_085": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_086": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "быстрый вывод выигрыша",
+    "quote": "5 минут ойнап шығарып аласың"
+   },
+   {
+    "track": "casino",
+    "label": "минимальный депозит",
+    "quote": "депозит 1000 тг ден"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_089": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_090": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_091": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_094": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "уведомление о выигрыше авто",
+    "quote": "сиздин номериниз утты. жулде: колик"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_095": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "оплата доставки приза",
+    "quote": "zhetkizu tolemin 2900 tg toleniz"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_096": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "колесо фортуны",
+    "quote": "там регаешься и крутишь колесо"
+   },
+   {
+    "track": "lottery",
+    "label": "комиссия за вывод выигрыша",
+    "quote": "комиссию только 1990 за вывод"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_098": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_100": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_106": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "бот для игры Mines",
+    "quote": "бот видит поле, доступ 5000 в лс"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_107": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_108": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "скрин выигрыша и вербовка",
+    "quote": "кеше 2 мыңнан 64 мың шығардым"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_109": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платный розыгрыш авто",
+    "quote": "билет 5000, всего 400 билетов"
+   },
+   {
+    "track": "lottery",
+    "label": "оплата на личную карту",
+    "quote": "каспи 4400 4302 1122 3344 Ерлан"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_111": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_112": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "нереальный выигрыш в игре",
+    "quote": "поднял 1.2 млн за неделю на одной игре"
+   },
+   {
+    "track": "casino",
+    "label": "продажа стратегии",
+    "quote": "стратегия 15 000 и в подарок VIP канал"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_118": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "удвоение криптовалюты",
+    "quote": "Отправь 100 USDT — получишь 200 USDT через 24 часа"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_119": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "набор в команду со взносом",
+    "quote": "стартқа 25к керек"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_121": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "продажа договорного матча",
+    "quote": "fixed match"
+   },
+   {
+    "track": "casino",
+    "label": "цена за инфо",
+    "quote": "сатамын 20к"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_122": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_124": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_126": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность",
+    "quote": "50 мың салсаңыз айына 150 мың аласыз"
+   },
+   {
+    "track": "pyramid",
+    "label": "гарантия дохода",
+    "quote": "кепілдік бар"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_127": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "фриспины новым игрокам",
+    "quote": "free spins 100 шт жаңа тіркелгендерге"
+   },
+   {
+    "track": "casino",
+    "label": "депозит и мгновенный вывод",
+    "quote": "депозит 1000 тенге, вывод instant"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_128": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "пассивные выплаты за вклад",
+    "quote": "я вообще ничего не делала просто вложила в начале месяца"
+   },
+   {
+    "track": "pyramid",
+    "label": "регистрация по реферальному коду",
+    "quote": "регайся под моим кодом"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_129": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_130": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "краш-игра Lucky Jet по боту",
+    "quote": "лаки джет называется, ставишь кэшаут на 1.8 по боту"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_131": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность майнера",
+    "quote": "майнер за 15 000 приносит 900 тг в день"
+   },
+   {
+    "track": "pyramid",
+    "label": "бонус за привлечение",
+    "quote": "друга привел — майнер бесплатно"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_132": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "продажа прогнозов на ставки",
+    "quote": "болжам бағасы 10 000 тг"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_133": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_137": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_138": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_139": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "заработок на мини-игре с депозитом",
+    "quote": "играешь в мини-игру по нашей стратегии, минимальный депозит 2000 тг"
+   },
+   {
+    "track": "casino",
+    "label": "обещание дохода",
+    "quote": "в день от 15к"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_140": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "схема на краш-игру",
+    "quote": "схема на ракетку до сих пор работает"
+   },
+   {
+    "track": "casino",
+    "label": "продажа сигналов",
+    "quote": "кому сигналы в лс"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_142": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "круг взаимопомощи",
+    "quote": "ozara komek toby ashyldy"
+   },
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность",
+    "quote": "10 000 salasyn 80 000 alasyn"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_143": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность",
+    "quote": "4% в день"
+   },
+   {
+    "track": "pyramid",
+    "label": "минимальный вклад",
+    "quote": "минимальный вклад 25 000"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_146": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "зеркало обхода блокировок",
+    "quote": "Рабочее зеркало без блокировок win-zhuldyz7.com"
+   },
+   {
+    "track": "casino",
+    "label": "бонус на депозит",
+    "quote": "бонус 200% на первый депозит"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_149": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "оплата растаможки приза",
+    "quote": "растаможку 6200 надо оплатить до завтра"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_150": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_151": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_152": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "продажа договорного матча",
+    "quote": "договорной матч сегодня вечером"
+   },
+   {
+    "track": "casino",
+    "label": "цена за инфо",
+    "quote": "цена 25 000"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_155": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_156": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_157": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_158": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "продажа договорного матча",
+    "quote": "dogovornyak segodnya kf 9"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_159": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "пополнение баланса для заработка",
+    "quote": "балансты 5000 тг толтыру керек"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_160": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "предоплата комиссии за выигрыш",
+    "quote": "комиссия за межбанковский перевод 4% оплачивается получателем заранее"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_161": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "налог за выигрыш",
+    "quote": "nado tolko nalog zakryt 18k"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_164": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "удвоение криптовалюты",
+    "quote": "USDT жібер екі есе қайтарамыз"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_165": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "налог за приз",
+    "quote": "тек салығын төлеу керек 15 мың"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_167": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "заработок на Mines",
+    "quote": "играю в Mines по стратегии daily 40-60k"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_169": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "депозит для заработка на заданиях",
+    "quote": "но сначала депозит 5000"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_170": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_173": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "круг с нереальной доходностью",
+    "quote": "вносишь 20 000 через 3 недели получаешь 160 000"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_175": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "заработок на игре с депозитом",
+    "quote": "kesh shygaramyn kunige oiyn arqyly, depozit 2000 tg"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_177": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "таможенный платёж за приз",
+    "quote": "кедендік төлем 7800 тг"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_180": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_181": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_182": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "вступительный пакет",
+    "quote": "entry package 75 000"
+   },
+   {
+    "track": "pyramid",
+    "label": "реферальный доход",
+    "quote": "referral income шексіз"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_184": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_185": {
+  "signals": [],
+  "legit_context": true
+ },
+ "b8_186": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "фейковый розыгрыш банка",
+    "quote": "служба розыгрыша Тумар Банка"
+   },
+   {
+    "track": "lottery",
+    "label": "выманивание SMS-кода",
+    "quote": "продиктуйте его для зачисления"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_189": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "заработок на игре",
+    "quote": "осы ойыннан күніне 40 мың табады"
+   },
+   {
+    "track": "casino",
+    "label": "бонус на первый депозит",
+    "quote": "бірінші салымға сыйлық береді"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_192": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "крутилка с выводом",
+    "quote": "крутишь пару минут в день и выводишь на карту"
+   },
+   {
+    "track": "casino",
+    "label": "промокод",
+    "quote": "промо ALMA500"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_193": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платное участие в розыгрыше",
+    "quote": "жазылу + 1000 тг аудару"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_196": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "заработок на игре",
+    "quote": "ойын ойнап күніне 30-50 мың шығарамын"
+   },
+   {
+    "track": "casino",
+    "label": "промокод",
+    "quote": "промокод QAZ100"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_197": {
+  "signals": [
+   {
+    "track": "lottery",
+    "label": "платный вход в розыгрыш",
+    "quote": "вход 2к всего"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_198": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "нереальная доходность",
+    "quote": "invest 50k и через месяц 150k"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_199": {
+  "signals": [
+   {
+    "track": "pyramid",
+    "label": "гарантированная доходность",
+    "quote": "garantiya 40% v mesyac"
+   }
+  ],
+  "legit_context": false
+ },
+ "b8_200": {
+  "signals": [
+   {
+    "track": "casino",
+    "label": "зеркало казино",
+    "quote": "rabochee zerkalo"
+   },
+   {
+    "track": "casino",
+    "label": "бонус на депозит",
+    "quote": "bonus na pervyi depozit 150%"
+   },
+   {
+    "track": "casino",
+    "label": "промокод",
+    "quote": "promokod KZ777"
+   }
+  ],
+  "legit_context": false
+ }
+}

@@ -5,14 +5,18 @@ from __future__ import annotations
 import logging
 import threading
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
+
+from PIL import Image
 
 from pruf.config import Settings
 from pruf.detect.detector import Detector, SourceText
 from pruf.models import Evidence
 from pruf.normalize.audio import transcribe
-from pruf.normalize.links import Link
+from pruf.normalize.links import ALLOWLIST_DOMAINS, Link
+from pruf.normalize.qr import decode_qr
 from pruf.normalize.requisites import redact_cards
 from pruf.normalize.text import normalize_text
 from pruf.registry.hashing import open_image
@@ -28,10 +32,6 @@ from pruf.storage.db import Database
 log = logging.getLogger(__name__)
 RISKY_LEVELS = ("medium", "high")
 # Бренды и площадки: их домены и логотипы повторяются легально и не связывают кейсы.
-ALLOWLIST_DOMAINS = frozenset({
-    "kaspi.kz", "halykbank.kz", "egov.kz", "gov.kz", "nationalbank.kz", "instagram.com", "t.me", "telegram.me",
-    "wa.me", "chat.whatsapp.com", "tiktok.com", "youtube.com", "youtu.be", "vk.com", "google.com", "2gis.kz",
-})
 REUSED_PROOF_WEIGHT = 20
 REUSED_PROOF_STEP = 5  # за каждый следующий рискованный пост с тем же пруфом, до +20
 EDITED_DIGITS_WEIGHT = 20
@@ -86,12 +86,29 @@ class Pruf:
         self.settings = settings
         self.db = Database(settings.db_path)
         self.blobs = BlobStore(settings.blob_dir)
-        self.registry = ProofRegistry(self.db, self.blobs, ocr_enabled=ocr_enabled)
+        self.registry = ProofRegistry(self.db, self.blobs, ocr_enabled=ocr_enabled and settings.ocr_enabled)
         self.detector = detector or Detector(settings)
         self.version = 0  # растёт при каждом приёме, по нему сбрасывается кэш графа
         # Один писатель: реестр (поиск → запись → добавление в индекс) и счётчик версии должны
         # обновляться атомарно, иначе две одновременные копии одного пруфа не найдут друг друга.
         self._ingest_lock = threading.Lock()
+
+    def _ocr_degraded(self, got: _Collected) -> list[dict[str, str]]:
+        if got.images and not self.settings.ocr_enabled:
+            return [{"component": "ocr", "reason": "Распознавание скриншотов выключено на этом сервере: суммы на скрине не прочитаны, "
+                                                   "совпадения по картинке ищутся"}]
+        if any(not r.ocr_ok for r in got.images):
+            return [{"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"}]
+        return []
+
+    def _read_qr(self, images: Iterable[Image.Image]) -> list[str]:
+        """Содержимое QR-кодов со всех картинок поста, без повторов. Медленное: зовётся вне общей блокировки."""
+        if not self.settings.qr_enabled:
+            return []
+        out: list[str] = []
+        for img in images:
+            out.extend(p for p in decode_qr(img) if p not in out)
+        return out
 
     # ---------- контекст из реестра и графа ----------
     def _proof_context(self, got: _Collected) -> list[Evidence]:
@@ -136,6 +153,12 @@ class Pruf:
                 continue
             levels = self.db.post_levels(others)
             risky = [p for p in others if levels[p][0] in RISKY_LEVELS]
+            cleared_at = self.db.requisite_cleared_at(req["key"]) if risky else None
+            if cleared_at:
+                # Аналитик отклонил кейс с этим реквизитом: старые посты его больше не засвечивают,
+                # иначе честный магазин навсегда остаётся «встречался в схемах». Новые рискованные посты после решения — да.
+                fresh = self.db.posts_created_after(risky, cleared_at)
+                risky = [p for p in risky if p in fresh]
             if risky:
                 tracks = sorted({levels[p][1] for p in risky if levels[p][1]})
                 out.append(Evidence(f"graph.requisite.{req['kind']}", _major_track(levels, risky),
@@ -144,58 +167,73 @@ class Pruf:
         return out
 
     # ---------- приём ----------
-    def ingest(self, sub: Submission) -> dict[str, Any]:
+    def ingest(self, sub: Submission, allow_llm: bool = True) -> dict[str, Any]:
         # Сначала проверяем файлы, чтобы битая картинка не оставила пустой пост.
         images = [(up, open_image(up.data)) for up in sub.uploads if up.kind == "image"]
+        # Медленное (OCR, Whisper, LLM) идёт вне общей блокировки: под ней только запись в реестр
+        # и чтение контекста, поэтому параллельные загрузки не выстраиваются в очередь за OCR.
+        ocr = [self.registry.read_ocr(img) for _, img in images]
+        qr = self._read_qr(img for _, img in images)
+        transcript, voice_failed = self._transcribe(sub)
         with self._ingest_lock:
             post_id = self.db.create_post(source=sub.source, channel=sub.channel, author=sub.author,
                                           posted_at=sub.posted_at, text=redact_cards(sub.text),
                                           external_id=sub.external_id, label=sub.label)
-            try:
-                return self._process(post_id, sub, images)
-            except Exception as exc:
-                self.db.mark_post_failed(post_id, type(exc).__name__)
-                raise
+        try:
+            return self._process(post_id, sub, images, ocr, transcript, voice_failed, allow_llm, qr)
+        except Exception as exc:
+            self.db.mark_post_failed(post_id, type(exc).__name__)
+            raise
 
-    def _process(self, post_id: int, sub: Submission, images: list) -> dict[str, Any]:
+    def _transcribe(self, sub: Submission) -> tuple[str | None, bool]:
+        if sub.transcript:
+            return sub.transcript, False
+        audio = next((up for up in sub.uploads if up.kind == "audio"), None)
+        if audio is None:
+            return None, False
+        transcript = transcribe(audio.data, "." + audio.ext)
+        return transcript, transcript is None
+
+    def _process(self, post_id: int, sub: Submission, images: list, ocr: list, transcript: str | None,
+                 voice_failed: bool, allow_llm: bool = True, qr: list[str] | None = None) -> dict[str, Any]:
         got = _Collected()
         degraded: list[dict[str, str]] = []
-        transcript = sub.transcript
-        for up, img in images:
-            got.images.append(self.registry.register_image(post_id, up.data, img=img))
-        for up in sub.uploads:
-            if up.kind != "audio":
-                continue
-            _aid, same = self.registry.register_audio(post_id, up.data, up.ext)
-            got.audio_posts.extend(same)
-            if not transcript:
-                transcript = transcribe(up.data, "." + up.ext)
-                if transcript is None:
-                    degraded.append({"component": "whisper", "reason": "голосовое не расшифровано: Whisper недоступен"})
-        if any(not r.ocr_ok for r in got.images):
-            degraded.append({"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"})
-        if sub.text:
-            text_res = self.registry.register_text(post_id, normalize_text(redact_cards(sub.text) or "").folded)
-            if text_res:
-                got.texts.append(text_res)
-        ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
-        sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""), SourceText("voice", transcript or "")]
-
-        first = self.detector.detect(sources, allow_llm=False)
-        for r in first.requisites:
-            self.db.link_requisite(post_id, r.kind, r.key, r.display)
-        for link in first.links:
-            if _links_cases(link):
-                self.db.add_link(post_id, link.url, link.domain, link.resolved)
-        context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
-        analysis = self.detector.detect(sources, context).analysis
+        if voice_failed:
+            degraded.append({"component": "whisper", "reason": "голосовое не расшифровано: Whisper недоступен"})
+        with self._ingest_lock:
+            for (up, img), (tokens, ocr_ok) in zip(images, ocr):
+                result = self.registry.register_image(post_id, up.data, ocr_tokens=tokens, img=img)
+                result.ocr_ok = ocr_ok
+                got.images.append(result)
+            for up in sub.uploads:
+                if up.kind == "audio":
+                    got.audio_posts.extend(self.registry.register_audio(post_id, up.data, up.ext)[1])
+            if sub.text:
+                text_res = self.registry.register_text(post_id, normalize_text(redact_cards(sub.text) or "").folded)
+                if text_res:
+                    got.texts.append(text_res)
+            ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or None
+            sources = [SourceText("text", sub.text or ""), SourceText("ocr", ocr_text or ""),
+                       SourceText("qr", "\n".join(qr or ())), SourceText("voice", transcript or "")]
+            # под общей блокировкой без сети: раскрытие коротких ссылок (до секунд на ссылку) остановило бы весь приём
+            first = self.detector.detect(sources, allow_llm=False, resolve_links=False)
+            for r in first.requisites:
+                self.db.link_requisite(post_id, r.kind, r.key, r.display)
+            context = self._proof_context(got) + self._requisite_context(post_id, first.analysis.requisites, first.analysis.links)
+        degraded.extend(self._ocr_degraded(got))
+        final = self.detector.detect(sources, context, allow_llm=allow_llm)  # LLM и раскрытие ссылок: вне блокировки
+        analysis = final.analysis
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))
-        self.db.update_post_analysis(post_id, score=analysis.score, level=analysis.level, track=analysis.track,
-                                     analysis=analysis.to_dict(), ocr_text=redact_cards(ocr_text),
-                                     transcript=redact_cards(transcript))
-        self.version += 1
+        with self._ingest_lock:
+            for link in final.links:  # уже раскрытые: граф связывает зеркала по настоящему домену
+                if _links_cases(link):
+                    self.db.add_link(post_id, link.url, link.domain, link.resolved)
+            self.db.update_post_analysis(post_id, score=analysis.score, level=analysis.level, track=analysis.track,
+                                         analysis=analysis.to_dict(), ocr_text=redact_cards(ocr_text),
+                                         transcript=redact_cards(transcript))
+            self.version += 1
         return {
             "post_id": post_id,
             "analysis": analysis.to_dict(),
@@ -215,20 +253,26 @@ class Pruf:
         return self.check(text)["analysis"]
 
     def check(self, text: str | None, images: tuple[bytes, ...] = (), transcript: str | None = None,
-              public: bool = False) -> dict[str, Any]:
+              public: bool = False, allow_llm: bool = True) -> dict[str, Any]:
         """Проверка без сохранения (бот, дашборд): реестр и граф только читаются, поэтому
         уже засвеченный номер или скрин, встречавшийся в рискованных постах, виден и здесь.
         public=True (анонимный пользователь бота): без каналов, сумм с чужих скринов и счётчиков."""
         decoded = [(data, open_image(data)) for data in images]
         got = _Collected(images=[self.registry.lookup_image(data, img) for data, img in decoded])
         degraded = []
-        if any(not r.ocr_ok for r in got.images):
-            degraded.append({"component": "ocr", "reason": "OCR недоступен: текст и суммы на скриншоте не прочитаны"})
+        degraded.extend(self._ocr_degraded(got))
         ocr_text = "\n".join(r.ocr_text for r in got.images if r.ocr_text) or ""
-        sources = [SourceText("text", text or ""), SourceText("ocr", ocr_text), SourceText("voice", transcript or "")]
-        first = self.detector.detect(sources, allow_llm=False)
-        context = self._proof_context(got) + self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
-        analysis = self.detector.detect(sources, context).analysis
+        qr = self._read_qr(img for _, img in decoded)
+        sources = [SourceText("text", text or ""), SourceText("ocr", ocr_text), SourceText("qr", "\n".join(qr)),
+                   SourceText("voice", transcript or "")]
+        first = self.detector.detect(sources, allow_llm=False, resolve_links=False)
+        context = self._proof_context(got)
+        # Анонимный бот не отвечает «есть ли этот номер в базе» на голый реквизит: иначе мошенник
+        # проверяет, засвечена ли его карта. Контекст реестра по реквизитам только если сам текст
+        # уже даёт средний риск. LLM для анонимов выключен: иначе любой может тратить бюджет API.
+        if not public or first.analysis.level in RISKY_LEVELS:
+            context += self._requisite_context(-1, first.analysis.requisites, first.analysis.links)
+        analysis = self.detector.detect(sources, context, allow_llm=allow_llm and not public, resolve_links=not public).analysis
         if analysis.llm_status == "failed":
             degraded.append({"component": "llm", "reason": "LLM-арбитр не ответил, балл посчитан без него"})
         analysis = replace(analysis, degraded=tuple(degraded))

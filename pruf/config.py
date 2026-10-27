@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import secrets
 from dataclasses import dataclass, field
@@ -21,13 +23,27 @@ class Settings:
     model_path: Path = field(default_factory=lambda: Path(os.environ.get("PRUF_MODEL_PATH", ROOT / "models" / "clf.joblib")))
     analyst_token: str = field(default_factory=lambda: os.environ.get("PRUF_ANALYST_TOKEN", ""))
     bank_tokens: tuple[str, ...] = field(default_factory=lambda: _env_list("PRUF_BANK_TOKENS"))
+    extension_tokens: tuple[str, ...] = field(default_factory=lambda: _env_list("PRUF_EXTENSION_TOKENS"))
+    # Демо без банков: токен аналитика открывает ленту реквизитов, пока PRUF_BANK_TOKENS не задан. Только явно.
+    bank_allow_analyst: bool = field(default_factory=lambda: os.environ.get("PRUF_BANK_ALLOW_ANALYST", "") == "1")
     dev_mode: bool = field(default_factory=lambda: os.environ.get("PRUF_DEV_MODE", "") == "1")
     hmac_key: str = field(default_factory=lambda: os.environ.get("PRUF_HMAC_KEY", ""))
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
-    llm_model: str = field(default_factory=lambda: os.environ.get("PRUF_LLM_MODEL", "claude-opus-5-5"))
+    llm_model: str = field(default_factory=lambda: os.environ.get("PRUF_LLM_MODEL", "claude-sonnet-5-5"))
+    llm_daily_budget: int = field(default_factory=lambda: int(os.environ.get("PRUF_LLM_DAILY_BUDGET", "5000")))
     telegram_token: str = field(default_factory=lambda: os.environ.get("TELEGRAM_BOT_TOKEN", ""))
     telegram_secret: str = field(default_factory=lambda: os.environ.get("PRUF_TELEGRAM_SECRET", ""))
+    # публичный адрес сервера: по нему бот сам регистрирует вебхук; Render задаёт RENDER_EXTERNAL_URL сам
+    public_url: str = field(default_factory=lambda: os.environ.get("PRUF_PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL", ""))
     resolve_links: bool = field(default_factory=lambda: os.environ.get("PRUF_RESOLVE_LINKS", "") == "1")
+    # PRUF_OCR=0 на хостинге с 512 МБ: модели OCR поднимают память сервера до 540–660 МБ
+    ocr_enabled: bool = field(default_factory=lambda: os.environ.get("PRUF_OCR", "1") != "0")
+    # QR-коды на картинках (pruf/normalize/qr.py): около 24 МБ памяти, работает и при PRUF_OCR=0
+    # Решения людей между перезапусками (pruf/storage/state.py): postgresql://… или file:/путь; пусто — не сохранять
+    state_url: str = field(default_factory=lambda: os.environ.get("PRUF_STATE_URL", ""))
+    # PRUF_SEED_DEMO=1: пустая база при старте заполняется демо-данными в фоне (pruf/demo_boot.py)
+    seed_demo: bool = field(default_factory=lambda: os.environ.get("PRUF_SEED_DEMO", "") == "1")
+    qr_enabled: bool = field(default_factory=lambda: os.environ.get("PRUF_QR", "1") != "0")
     max_upload_bytes: int = field(default_factory=lambda: int(os.environ.get("PRUF_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024))))
     rate_limit_per_minute: int = field(default_factory=lambda: int(os.environ.get("PRUF_RATE_LIMIT", "120")))
 
@@ -38,6 +54,13 @@ class Settings:
     @property
     def blob_dir(self) -> Path:
         return self.data_dir / "blobs"
+
+    def webhook_secret(self) -> str:
+        """Секрет вебхука бота: PRUF_TELEGRAM_SECRET, а если он не задан — выводится из PRUF_HMAC_KEY.
+        Ключ на сервере постоянный, поэтому и секрет один и тот же после каждого перезапуска."""
+        if self.telegram_secret or not self.hmac_key:
+            return self.telegram_secret
+        return hmac.new(self.hmac_key.encode(), b"pruf-telegram-webhook", hashlib.sha256).hexdigest()
 
     def effective_hmac_key(self) -> bytes:
         if self.hmac_key:

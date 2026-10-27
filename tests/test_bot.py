@@ -17,6 +17,7 @@ from pruf.bot.telegram import (
     _best_photo,
     format_result,
 )
+from pruf.bot.texts import reply_lang, say
 from pruf.pipeline import Pruf, Submission, Upload
 from tests.helpers import CASINO_RU, KASPI_PHONE, LOTTERY_RU, make_settings
 
@@ -26,10 +27,21 @@ MAX_BYTES = 8 * 1024 * 1024
 class FakeApi:
     def __init__(self, files: dict[str, bytes] | None = None):
         self.sent: list[tuple[int, str, int | None]] = []
+        self.buttons: list[list[tuple[str, str]] | None] = []
+        self.answers: list[tuple[str, str]] = []
+        self.cleared: list[tuple[int, int]] = []
         self.files = files or {}
 
-    def send_message(self, chat_id: int, text: str, reply_to: int | None = None) -> None:
+    def send_message(self, chat_id: int, text: str, reply_to: int | None = None,
+                     buttons: list[tuple[str, str]] | None = None) -> None:
         self.sent.append((chat_id, text, reply_to))
+        self.buttons.append(buttons)
+
+    def answer_callback(self, callback_id: str, text: str) -> None:
+        self.answers.append((callback_id, text))
+
+    def clear_buttons(self, chat_id: int, message_id: int) -> None:
+        self.cleared.append((chat_id, message_id))
 
     def file_size_and_path(self, file_id: str) -> tuple[int, str]:
         return len(self.files[file_id]), file_id
@@ -77,6 +89,58 @@ def test_scam_text_gets_risk_and_quotes_without_storing(pruf: Pruf) -> None:
     assert "«" in reply.text  # цитата из поста
     assert "не вердикт" in reply.text
     assert pruf.db.count_posts() == posts_before  # бот только читает реестр
+
+
+LOTTERY_KK = "Ұтыс ойыны! iPhone 15 ұтып алыңыз. Қатысу 1000 теңге, каспиге аударыңыз {phone}. Жеңімпаз жұмада"
+
+
+def test_kazakh_post_gets_kazakh_reply(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+
+    # Act
+    reply = BotLogic(pruf, api, MAX_BYTES).handle(_msg(LOTTERY_KK.format(phone=KASPI_PHONE)))
+
+    # Assert
+    assert reply is not None and "Тәуекел: жоғары" in reply.text
+    assert "ақылы ұтыс ойыны" in reply.text
+    assert "Бейтаныс ұйымдастырушыларға ақша аудармаңыз" in reply.text
+    assert "Риск:" not in reply.text
+
+
+def test_start_with_kazakh_telegram_language_gets_kazakh_help(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+
+    # Act
+    BotLogic(pruf, api, MAX_BYTES).handle(_msg("/start", **{"from": {"id": 5, "language_code": "kk"}}))
+
+    # Assert
+    assert api.sent == [(42, say("kk", "help"), None)]
+
+
+def test_russian_post_from_kazakh_user_stays_russian(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+
+    # Act
+    reply = BotLogic(pruf, api, MAX_BYTES).handle(
+        _msg(LOTTERY_RU.format(phone=KASPI_PHONE), **{"from": {"id": 5, "language_code": "kk"}}))
+
+    # Assert
+    assert reply is not None and "Риск: высокий" in reply.text
+
+
+@pytest.mark.parametrize(("text", "user_lang", "expected"), [
+    ("Ұтыс ойыны! Қатысу тегін", None, "kk"),
+    ("Розыгрыш, участие 2000 тг", "kk", "ru"),
+    ("Розыгрыш с опечаткой і", None, "ru"),  # одна казахская буква не делает текст казахским
+    ("", "kk-KZ", "kk"),
+    ("", "ru", "ru"),
+    ("", None, "ru"),
+])
+def test_reply_lang(text: str, user_lang: str | None, expected: str) -> None:
+    assert reply_lang(text, user_lang) == expected
 
 
 def test_known_requisite_from_other_track_is_reported(pruf: Pruf) -> None:
@@ -261,7 +325,7 @@ def test_webhook_checks_secret_dedupes_and_answers(tmp_path: Path, monkeypatch: 
     # Arrange
     monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
     sent = []
-    monkeypatch.setattr(HttpTelegramApi, "send_message", lambda self, chat, text, reply_to=None: sent.append(text))
+    monkeypatch.setattr(HttpTelegramApi, "send_message", lambda self, chat, text, reply_to=None, buttons=None: sent.append(text))
     update = _msg(LOTTERY_RU.format(phone=KASPI_PHONE))
     with _client(tmp_path, telegram_token="1:abc", telegram_secret=SECRET) as client:
         # Act
@@ -288,3 +352,214 @@ def test_webhook_rejects_short_secret_and_big_body(tmp_path: Path, monkeypatch: 
         bad_json = client.post("/api/v1/telegram/webhook", content=b"[1]",
                                headers={"X-Telegram-Bot-Api-Secret-Token": SECRET, "Content-Type": "application/json"})
         assert bad_json.status_code == 400
+
+
+# ---------- «Это не мошенничество» ----------
+ANALYST = "analyst-" + "t" * 32
+
+
+def _press(data: str, user: int = 42, update_id: int = 2) -> dict:
+    return {"update_id": update_id, "callback_query": {
+        "id": f"cb{update_id}", "from": {"id": user}, "data": data,
+        "message": {"message_id": 8, "chat": {"id": user, "type": "private"}}}}
+
+
+def test_risky_answer_has_not_scam_button_and_low_has_none(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+    bot = BotLogic(pruf, api, MAX_BYTES)
+
+    # Act
+    bot.handle(_msg(LOTTERY_RU.format(phone=KASPI_PHONE)))
+    bot.handle(_msg("Привет, как дела? Завтра встречаемся в кафе."))
+
+    # Assert
+    risky, clean = api.buttons
+    assert risky and risky[0][0] == "Это не мошенничество" and risky[0][1].startswith("fp:")
+    assert len(risky[0][1].encode()) <= 64  # лимит callback_data в Telegram
+    assert clean is None
+
+
+def test_pressing_not_scam_stores_features_but_not_text(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+    bot = BotLogic(pruf, api, MAX_BYTES)
+    post = LOTTERY_RU.format(phone=KASPI_PHONE)
+    bot.handle(_msg(post))
+    data = api.buttons[0][0][1]
+
+    # Act
+    bot.handle(_press(data))
+
+    # Assert
+    assert api.answers == [("cb2", say("ru", "feedback_thanks"))]
+    assert api.cleared == [(42, 8)]
+    disputed = pruf.db.disputed_features()
+    assert disputed and all(d["disputes"] == 1 and d["reporters"] == 1 and d["shown"] == 1 for d in disputed)
+    stored = pruf.db._all("SELECT * FROM bot_feedback")
+    assert len(stored) == 1 and stored[0]["level"] == "high"
+    dump = repr(stored) + repr(pruf.db._all("SELECT * FROM bot_feature_shown"))
+    assert KASPI_PHONE not in dump and "iPhone" not in dump  # ни текста, ни реквизитов
+    assert "42" not in stored[0]["reporter"]  # id пользователя только в HMAC
+
+
+def test_second_press_and_stale_button_are_not_counted(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+    bot = BotLogic(pruf, api, MAX_BYTES)
+    bot.handle(_msg(LOTTERY_RU.format(phone=KASPI_PHONE)))
+    data = api.buttons[0][0][1]
+    bot.handle(_press(data))
+
+    # Act
+    bot.handle(_press(data, update_id=3))
+    bot.handle(_press("fp:unknown", update_id=4))
+    bot.handle(_press("garbage", update_id=5))
+
+    # Assert: повтор и неизвестная кнопка получают пояснение, мусор игнорируется
+    assert [a[1] for a in api.answers[1:]] == [say("ru", "feedback_expired")] * 2
+    assert pruf.db.bot_feedback_count() == 1
+
+
+def test_disputes_from_different_people_are_counted_separately(pruf: Pruf) -> None:
+    # Arrange
+    api = FakeApi()
+    bot = BotLogic(pruf, api, MAX_BYTES)
+    post = LOTTERY_RU.format(phone=KASPI_PHONE)
+
+    # Act: трое получили ответ, двое оспорили
+    for user in (1, 2, 3):
+        bot.handle({"update_id": user, "message": {"message_id": 7, "chat": {"id": user, "type": "private"}, "text": post}})
+    for user in (1, 2):
+        bot.handle(_press(api.buttons[user - 1][0][1], user=user, update_id=10 + user))
+
+    # Assert
+    top = pruf.db.disputed_features()[0]
+    assert top["reporters"] == 2 and top["shown"] == 3 and top["rate"] == round(2 / 3, 3)
+
+
+def test_kazakh_answer_has_kazakh_button(pruf: Pruf) -> None:
+    api = FakeApi()
+    bot = BotLogic(pruf, api, MAX_BYTES)
+    bot.handle(_msg(LOTTERY_KK.format(phone=KASPI_PHONE)))
+    assert api.buttons[0][0][0] == "Бұл алаяқтық емес"
+    bot.handle(_press(api.buttons[0][0][1]))
+    assert api.answers[0][1] == say("kk", "feedback_thanks")
+
+
+def test_callback_from_group_is_ignored(pruf: Pruf) -> None:
+    api = FakeApi()
+    bot = BotLogic(pruf, api, MAX_BYTES)
+    update = _press("fp:x")
+    update["callback_query"]["message"]["chat"]["type"] = "group"
+    assert bot.handle(update) is None and api.answers == []
+
+
+def test_http_api_sends_inline_keyboard_and_answers_callback() -> None:
+    # Arrange
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.url.path.rsplit("/", 1)[-1], request.read().decode()))
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    api = HttpTelegramApi("1:abc", httpx.Client(transport=httpx.MockTransport(handler)))
+
+    # Act
+    api.send_message(42, "hi", 7, [("Это не мошенничество", "fp:t")])
+    api.answer_callback("cb", "ok")
+    api.clear_buttons(42, 8)
+
+    # Assert
+    assert [c[0] for c in calls] == ["sendMessage", "answerCallbackQuery", "editMessageReplyMarkup"]
+    assert '"callback_data":"fp:t"' in calls[0][1].replace(" ", "")
+
+
+def test_feedback_endpoint_needs_analyst_and_lists_disputes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    settings = make_settings(tmp_path, dev_mode=False, analyst_token=f"alice:{ANALYST}")
+    core = Pruf(settings, ocr_enabled=False)
+    api = FakeApi()
+    bot = BotLogic(core, api, MAX_BYTES)
+    bot.handle(_msg(LOTTERY_RU.format(phone=KASPI_PHONE)))
+    bot.handle(_press(api.buttons[0][0][1]))
+
+    with TestClient(create_app(settings, pruf=core)) as client:
+        # Act
+        anon = client.get("/api/v1/bot/feedback")
+        got = client.get("/api/v1/bot/feedback", headers={"Authorization": f"Bearer {ANALYST}"})
+
+    # Assert
+    assert anon.status_code == 401
+    body = got.json()
+    assert body["meta"]["total"] == 1 and body["data"][0]["disputes"] == 1
+
+
+def test_kazakh_reply_shows_kazakh_feature_labels(pruf: Pruf) -> None:
+    api = FakeApi()
+    reply = BotLogic(pruf, api, MAX_BYTES).handle(_msg(LOTTERY_KK.format(phone=KASPI_PHONE)))
+    assert reply is not None
+    assert "Жүлде немесе ұтыс ойыны туралы уәде" in reply.text
+    assert "орыс тілінде" not in reply.text and "Обещание приза" not in reply.text
+
+
+def test_every_scheme_feature_has_a_kazakh_label() -> None:
+    from pruf.bot.texts import LABELS_KK
+    from pruf.detect.lexicon import FEATURES
+
+    # все признаки, включая стоп-признаки легальности: их показывают и бот, и казахский дашборд
+    missing = [f.id for f in FEATURES if f.id not in LABELS_KK]
+    assert missing == [], "переведите признаки для казахского ответа бота и дашборда (pruf/bot/texts.py, LABELS_KK)"
+
+
+# ---------- вебхук без ручной настройки ----------
+def test_webhook_secret_is_derived_from_hmac_key_unless_set(tmp_path: Path) -> None:
+    derived = make_settings(tmp_path, telegram_secret="").webhook_secret()
+    assert len(derived) == 64 and derived == make_settings(tmp_path / "b", telegram_secret="").webhook_secret()
+    assert make_settings(tmp_path, telegram_secret=SECRET).webhook_secret() == SECRET
+    assert make_settings(tmp_path, telegram_secret="", hmac_key="").webhook_secret() == ""
+
+
+def _wait_webhook(client) -> dict:
+    import time
+    for _ in range(100):
+        bot = client.get("/api/v1/stats").json()["data"]["bot"]
+        if bot["webhook"]:
+            return bot
+        time.sleep(0.02)
+    raise AssertionError("вебхук не зарегистрирован")
+
+
+def test_server_registers_its_own_webhook_with_only_a_bot_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: на Render задан только токен бота; адрес сервера известен
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(HttpTelegramApi, "set_webhook", lambda self, url, secret: calls.append((url, secret)))
+    sent = []
+    monkeypatch.setattr(HttpTelegramApi, "send_message", lambda self, chat, text, reply_to=None, buttons=None: sent.append(text))
+
+    with _client(tmp_path, telegram_token="1:abc", telegram_secret="", public_url="https://pruf.example.com/") as client:
+        # Act
+        bot = _wait_webhook(client)
+        secret = calls[0][1]
+        answer = client.post("/api/v1/telegram/webhook", json=_msg(LOTTERY_RU.format(phone=KASPI_PHONE)),
+                             headers={"X-Telegram-Bot-Api-Secret-Token": secret})
+
+    # Assert: зарегистрирован свой адрес с выведенным секретом, и Telegram с этим секретом принимается
+    assert calls == [("https://pruf.example.com/api/v1/telegram/webhook", secret)] and len(secret) == 64
+    assert bot == {"on": True, "webhook": "ok"}
+    assert answer.json()["data"] == {"queued": True}
+
+
+def test_failed_webhook_registration_is_visible_and_harmless(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+
+    def refuse(self, url, secret):
+        raise RuntimeError("Telegram setWebhook: Unauthorized")
+
+    monkeypatch.setattr(HttpTelegramApi, "set_webhook", refuse)
+    with _client(tmp_path, telegram_token="1:bad", telegram_secret="", public_url="https://pruf.example.com") as client:
+        bot = _wait_webhook(client)
+        assert client.get("/api/v1/health").status_code == 200
+    assert bot == {"on": True, "webhook": "Telegram setWebhook: Unauthorized"}

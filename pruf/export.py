@@ -20,6 +20,9 @@ DISCLAIMER = ("Пакет содержит признаки, найденные 
               "Решение принимает уполномоченный аналитик.")
 
 
+# Сколько байт файлов-пруфов кладём в один пакет (остальные только хешами в manifest.json)
+MAX_EXPORT_ARTIFACT_BYTES = 200 * 1024 * 1024
+
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -60,9 +63,15 @@ def build_evidence_package(db: Database, blobs: BlobStore, graph: CaseGraph, cas
     files: dict[str, bytes] = {}
     artifacts_meta = []
     missing: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    budget = MAX_EXPORT_ARTIFACT_BYTES
     for p in posts:
         for art in db.artifacts_for_post(p["id"]):
             if art["kind"] not in ("image", "audio") or not art["ext"]:
+                continue
+            if budget <= 0:
+                # Пакет собирается в памяти: сверх лимита файлы не кладём, но фиксируем их хеши
+                skipped.append({"post_id": p["id"], "artifact_id": art["id"], "sha256": art["sha256"]})
                 continue
             data = blobs.get(art["sha256"], art["ext"])
             if data is None:
@@ -70,6 +79,7 @@ def build_evidence_package(db: Database, blobs: BlobStore, graph: CaseGraph, cas
                 continue
             name = f"artifacts/post{p['id']}_a{art['id']}.{art['ext']}"
             files[name] = data
+            budget -= len(data)
             artifacts_meta.append({"file": name, "post_id": p["id"], "artifact_id": art["id"], "sha256": art["sha256"],
                                    "pdq": art.get("pdq")})
     files["graph.json"] = json.dumps(graph.subgraph(case.post_ids), ensure_ascii=False, indent=1).encode()
@@ -78,6 +88,7 @@ def build_evidence_package(db: Database, blobs: BlobStore, graph: CaseGraph, cas
     manifest = {
         "case": case.to_dict(), "generated_at_utc": generated, "generator": f"pruf {__version__}", "exported_by": actor,
         "disclaimer": DISCLAIMER, "artifacts": artifacts_meta, "missing_artifacts": missing,
+        "skipped_artifacts": skipped,
         "files": {name: _sha(data) for name, data in sorted(files.items())},
     }
     manifest_bytes = json.dumps(manifest, ensure_ascii=False, indent=1).encode()
